@@ -1,0 +1,516 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  AUTHORITY
+  STUDENT
+  TEACHER
+}
+
+enum MembershipStatus {
+  PENDING
+  ACTIVE
+  REJECTED
+  INACTIVE
+}
+
+enum PlanCode {
+  BASIC
+  PRO
+}
+
+enum BillingCycle {
+  MONTHLY
+  YEARLY
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  TRIALING
+  EXPIRED
+  CANCELLED
+}
+
+enum RegistrationIntentStatus {
+  PENDING_PAYMENT
+  COMPLETED
+  FAILED
+  CANCELLED
+  EXPIRED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESSFUL
+  FAILED
+  CANCELLED
+}
+
+enum PaymentProvider {
+  DEMO
+  SSLCOMMERZ
+}
+
+enum DepartmentChangeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum DepartmentChangeType {
+  STUDENT_CHANGE
+  TEACHER_ADD
+  TEACHER_REMOVE
+  TEACHER_PRIMARY_CHANGE
+}
+
+enum IssueCategory {
+  CLASSROOM_EQUIPMENT
+  WIFI_NETWORKING
+  ELECTRICAL
+  FURNITURE_INFRASTRUCTURE
+  CLEANING_SANITATION
+  LAB_EQUIPMENT
+  OTHER
+}
+
+enum IssuePriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum IssueStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum IssueAudience {
+  STUDENT
+  TEACHER
+}
+
+enum NoteVisibility {
+  INTERNAL
+  PUBLIC
+}
+
+model Institution {
+  id                String   @id @default(cuid())
+  name              String
+  normalizedName    String   @unique
+  institutionCode   String   @unique
+  contactPersonName String
+  contactEmail      String   @unique
+  campusType        String
+  campusSize        String
+  location          String
+  adminUserId       String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  administrator            User                      @relation("InstitutionAdministrator", fields: [adminUserId], references: [id], onDelete: Restrict)
+  memberships              InstitutionMembership[]
+  departments              Department[]
+  registrationIntents      RegistrationIntent[]
+  subscriptions            Subscription[]
+  payments                 Payment[]
+  issues                   Issue[]
+  issueHistory             IssueHistory[]
+  issueNotes               IssueNote[]
+  auditLogs                AuditLog[]
+  notifications            Notification[]
+  departmentMemberships    DepartmentMembership[]
+  departmentChangeRequests DepartmentChangeRequest[]
+  authorityDepartments     AuthorityDepartment[]
+
+  @@index([adminUserId])
+}
+
+model User {
+  id          String   @id @default(cuid())
+  firebaseUid String   @unique
+  email       String   @unique
+  name        String
+  phone       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  administeredInstitutions     Institution[]             @relation("InstitutionAdministrator")
+  memberships                  InstitutionMembership[]
+  assignedAuthorityDepartments AuthorityDepartment[]     @relation("AuthorityDepartmentAssigner")
+  reviewedMemberships          InstitutionMembership[]   @relation("MembershipReviewer")
+  requestedDepartmentChanges   DepartmentChangeRequest[] @relation("DepartmentChangeRequester")
+  reviewedDepartmentChanges    DepartmentChangeRequest[] @relation("DepartmentChangeReviewer")
+  reportedIssues               Issue[]                   @relation("IssueReporter")
+  archivedIssues               Issue[]                   @relation("IssueArchiver")
+  changedIssueHistory          IssueHistory[]            @relation("IssueHistoryActor")
+  authoredIssueNotes           IssueNote[]               @relation("IssueNoteAuthor")
+  auditLogs                    AuditLog[]                @relation("AuditActor")
+  notifications                Notification[]            @relation("NotificationRecipient")
+
+  @@index([name])
+}
+
+model InstitutionMembership {
+  id                     String           @id @default(cuid())
+  institutionId          String
+  userId                 String
+  role                   UserRole
+  status                 MembershipStatus @default(PENDING)
+  studentId              String?
+  teacherId              String?
+  requestedDepartmentId  String?
+  reviewedById           String?
+  reviewedByMembershipId String?
+  reviewedAt             DateTime?
+  deletedAt              DateTime?
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+
+  institution              Institution               @relation(fields: [institutionId], references: [id], onDelete: Restrict)
+  user                     User                      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  reviewedBy               User?                     @relation("MembershipReviewer", fields: [reviewedById], references: [id], onDelete: Restrict)
+  reviewedByMembership     InstitutionMembership?    @relation("MembershipApprovalReviewer", fields: [reviewedByMembershipId, institutionId, reviewedById], references: [id, institutionId, userId], onDelete: Restrict)
+  requestedDepartment      Department?               @relation("MembershipRequestedDepartment", fields: [requestedDepartmentId, institutionId], references: [id, institutionId], onDelete: Restrict)
+  approvedMemberships      InstitutionMembership[]   @relation("MembershipApprovalReviewer")
+  departmentMemberships    DepartmentMembership[]
+  authorityDepartments     AuthorityDepartment[]
+  departmentChangeRequests DepartmentChangeRequest[]
+  requestedChangeRequests  DepartmentChangeRequest[] @relation("ChangeRequesterMembership")
+  reviewedChangeRequests   DepartmentChangeRequest[] @relation("ChangeReviewerMembership")
+  reportedIssues           Issue[]                   @relation("IssueReporterMembership")
+  archivedIssues           Issue[]                   @relation("IssueArchiverMembership")
+  issueHistoryEntries      IssueHistory[]            @relation("IssueHistoryActorMembership")
+  issueNotes               IssueNote[]               @relation("IssueNoteAuthorMembership")
+  auditLogs                AuditLog[]                @relation("AuditActorMembership")
+  notifications            Notification[]            @relation("NotificationRecipientMembership")
+
+  @@unique([institutionId, userId])
+  @@unique([institutionId, studentId])
+  @@unique([institutionId, teacherId])
+  @@unique([id, institutionId])
+  @@unique([id, institutionId, userId])
+  @@index([institutionId, role, status])
+  @@index([userId, status])
+  @@index([reviewedById, reviewedAt])
+  @@index([institutionId, requestedDepartmentId])
+}
+
+model Department {
+  id            String           @id @default(cuid())
+  institutionId String
+  name          String
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  institution                  Institution               @relation(fields: [institutionId], references: [id], onDelete: Restrict)
+  memberships                  DepartmentMembership[]
+  authorityAssignments         AuthorityDepartment[]
+  subscriptions                Subscription[]
+  payments                     Payment[]
+  auditLogs                    AuditLog[]
+  issues                       Issue[]
+  currentForChangeRequests     DepartmentChangeRequest[] @relation("CurrentDepartment")
+  requestedForChangeRequests   DepartmentChangeRequest[] @relation("RequestedDepartment")
+  replacementForChangeRequests DepartmentChangeRequest[] @relation("ReplacementDepartment")
+  requestedMemberships         InstitutionMembership[]   @relation("MembershipRequestedDepartment")
+
+  @@unique([id, institutionId])
+  @@index([institutionId])
+}
+
+model AuthorityDepartment {
+  id                    String   @id @default(cuid())
+  institutionId         String
+  authorityMembershipId String
+  departmentId          String
+  assignedById          String
+  createdAt             DateTime @default(now())
+
+  institution         Institution           @relation(fields: [institutionId], references: [id], onDelete: Restrict)
+  authorityMembership InstitutionMembership @relation(fields: [authorityMembershipId, institutionId], references: [id, institutionId], onDelete: Restrict)
+  department          Department            @relation(fields: [departmentId, institutionId], references: [id, institutionId], onDelete: Restrict)
+  assignedBy          User                  @relation("AuthorityDepartmentAssigner", fields: [assignedById], references: [id], onDelete: Restrict)
+
+  @@unique([authorityMembershipId, departmentId])
+  @@index([institutionId])
+  @@index([departmentId])
+}
+
+model DepartmentMembership {
+  id            String   @id @default(cuid())
+  institutionId String
+  membershipId  String
+  departmentId  String
+  isPrimary     Boolean  @default(false)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  institution Institution           @relation(fields: [institutionId], references: [id], onDelete: Restrict)
+  membership  InstitutionMembership @relation(fields: [membershipId, institutionId], references: [id, institutionId], onDelete: Restrict)
+  department  Department            @relation(fields: [departmentId, institutionId], references: [id, institutionId], onDelete: Restrict)
+
+  @@unique([membershipId, departmentId])
+  @@index([institutionId, departmentId, isActive])
+  @@index([membershipId, isActive, isPrimary])
+}
+
+model DepartmentChangeRequest {
+  id                      String                 @id @default(cuid())
+  institutionId           String
+  membershipId            String
+  changeType              DepartmentChangeType
+  currentDepartmentId     String?
+  requestedDepartmentId   String?
+  replacementDepartmentId String?
+  reason                  String
+  status                  DepartmentChangeStatus @default(PENDING)
+  requestedById           String
+  reviewedById            String?
+  reviewedByMembershipId  String?
+  requestedAt             DateTime               @default(now())
+  reviewedAt              DateTime?
+
+  institution           Institution            @relation(fields: [institutionId], references: [id], onDelete: Restrict)
+  membership            InstitutionMembership  @relation(fields: [membershipId, institutionId], references: [id, institutionId], onDelete: Restrict)
+  currentDepartment     Department?            @relation("CurrentDepartment", fields: [currentDepartmentId, institutionId], references: [id, institutionId], onDelete: Restrict)
+  requestedDepartment   Department?            @relation("RequestedDepartment", fields: [requestedDepartmentId, institutionId], references: [id, institutionId], onDelete: Restrict)
+  replacementDepartment Department?            @relation("ReplacementDepartment", fields: [replacementDepartmentId, institutionId], references: [id, institutionId], onDelete: Restrict)
+  requestedBy           User                   @relation("DepartmentChangeRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  requestedByMembership InstitutionMembership  @relation("ChangeRequesterMembership", fields: [membershipId, institutionId, requestedById], references: [id, institutionId, userId], onDelete: Restrict)
+  reviewedBy            User?                  @relation("DepartmentChangeReviewer", fields: [reviewedById], references: [id], onDelete: Restrict)
+  reviewedByMembership  InstitutionMembership? @relation("ChangeReviewerMembership", fields: [reviewedByMembershipId, institutionId, reviewedById], references: [id, institutionId, userId], onDelete: Restrict)
+
+  @@index([institutionId, status, requestedAt])
+  @@index([membershipId, status])
+  @@index([requestedById, requestedAt])
+  @@index([reviewedById, reviewedAt])
+}
+
+model Subscription {
+  id            String             @id @default(cuid())
+  institutionId String
+  /// Deprecated: populated only for legacy department subscriptions; null for institution subscriptions.
+  departmentId  String?
+  /// Deprecated: legacy display label; planCode is canonical for institution subscriptions.
+  planName      String
+  planCode      PlanCode?
+  billingCycle  BillingCycle?
+  status        SubscriptionStatus @default(ACTIVE)
+  startsAt      DateTime
+  endsAt        DateTime
+  trialEndsAt   DateTime?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  institution Institution @relation(fields: [institutionId], references: [id], onDelete: Restrict)
+  /// Deprecated: retained for legacy department subscription history.
+  department  Department? @relation(fields: [departmentId, institutionId], references: [id, institutionId], onDelete: Restrict)
+  payments    Payment[]
+
+  @@unique([id, departmentId, institutionId])
+  @@index([institutionId, status, endsAt])
+  @@index([departmentId, status, endsAt])
+}
+
+model Payment {
+  id                    String          @id @default(cuid())
+  institutionId         String?
+  /// Deprecated: retained for legacy department payment history.
+  departmentId          String?
+  subscriptionId        String?
+  registrationIntentId  String?         @unique
+  amount                Decimal         @db.Decimal(12, 2)
+  currency              String          @db.VarChar(3)
+  status                PaymentStatus   @default(PENDING)
+  provider              PaymentProvider @default(DEMO)
+  providerTransactionId String?
+  planCode              PlanCode?
+  billingCycle          BillingCycle?
+  rawResponse           Json?
+  /// Deprecated: retained for legacy department payments.
+  transactionReference  String?         @unique
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  institution        Institution?        @relation(fields: [institutionId], references: [id], onDelete: Restrict)
+  /// Deprecated: retained for legacy department payment history.
+  department         Department?         @relation(fields: [departmentId, institutionId], references: [id, institutionId], onDelete: Restrict)
+  subscription       Subscription?       @relation(fields: [subscriptionId, departmentId, institutionId], references: [id, departmentId, institutionId], onDelete: Restrict)
+  registrationIntent RegistrationIntent? @relation(fields: [registrationIntentId], references: [id], onDelete: Restrict)
+
+  @@unique([provider, providerTransactionId])
+  @@index([institutionId, status, createdAt])
+  @@index([departmentId, status, createdAt])
+  @@index([subscriptionId])
+}
+
+model RegistrationIntent {
+  id                String                   @id @default(cuid())
+  planCode          PlanCode
+  billingCycle      BillingCycle
+  status            RegistrationIntentStatus @default(PENDING_PAYMENT)
+  amount            Decimal                  @db.Decimal(12, 2)
+  currency          String                   @default("BDT") @db.VarChar(3)
+  institutionName   String
+  normalizedName    String
+  contactPersonName String
+  contactEmail      String
+  campusType        String
+  campusSize        String
+  location          String
+  adminName         String
+  adminEmail        String
+  firebaseUid       String                   @unique
+  institutionId     String?
+  expiresAt         DateTime
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+
+  institution Institution? @relation(fields: [institutionId], references: [id], onDelete: Restrict)
+  payment     Payment?
+
+  @@index([status])
+  @@index([expiresAt])
+  @@index([normalizedName])
+  @@index([contactEmail])
+}
+
+model Issue {
+  id                     String        @id @default(cuid())
+  institutionId          String
+  departmentId           String
+  reporterId             String
+  reporterMembershipId   String
+  title                  String
+  description            String
+  category               IssueCategory
+  priority               IssuePriority
+  status                 IssueStatus   @default(OPEN)
+  audience               IssueAudience
+  location               String
+  resolutionSummary      String?
+  archivedAt             DateTime?
+  archivedById           String?
+  archivedByMembershipId String?
+  archiveReason          String?
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+
+  institution          Institution            @relation(fields: [institutionId], references: [id], onDelete: Restrict)
+  department           Department             @relation(fields: [departmentId, institutionId], references: [id, institutionId], onDelete: Restrict)
+  reporter             User                   @relation("IssueReporter", fields: [reporterId], references: [id], onDelete: Restrict)
+  reporterMembership   InstitutionMembership  @relation("IssueReporterMembership", fields: [reporterMembershipId, institutionId, reporterId], references: [id, institutionId, userId], onDelete: Restrict)
+  archivedBy           User?                  @relation("IssueArchiver", fields: [archivedById], references: [id], onDelete: Restrict)
+  archivedByMembership InstitutionMembership? @relation("IssueArchiverMembership", fields: [archivedByMembershipId, institutionId, archivedById], references: [id, institutionId, userId], onDelete: Restrict)
+  history              IssueHistory[]
+  notes                IssueNote[]
+
+  @@unique([id, institutionId])
+  @@index([institutionId, audience, status, createdAt])
+  @@index([institutionId, departmentId, status])
+  @@index([reporterId, createdAt])
+  @@index([reporterMembershipId])
+  @@index([archivedById])
+  @@index([archivedAt])
+}
+
+model IssueHistory {
+  id                    String       @id @default(cuid())
+  institutionId         String
+  issueId               String
+  oldStatus             IssueStatus?
+  newStatus             IssueStatus
+  changedById           String
+  changedByMembershipId String
+  note                  String?
+  resolutionSummary     String?
+  createdAt             DateTime     @default(now())
+
+  institution         Institution           @relation(fields: [institutionId], references: [id], onDelete: Restrict)
+  issue               Issue                 @relation(fields: [issueId, institutionId], references: [id, institutionId], onDelete: Restrict)
+  changedBy           User                  @relation("IssueHistoryActor", fields: [changedById], references: [id], onDelete: Restrict)
+  changedByMembership InstitutionMembership @relation("IssueHistoryActorMembership", fields: [changedByMembershipId, institutionId, changedById], references: [id, institutionId, userId], onDelete: Restrict)
+
+  @@index([institutionId, issueId, createdAt])
+  @@index([changedById, createdAt])
+  @@index([changedByMembershipId, createdAt])
+}
+
+model IssueNote {
+  id                 String         @id @default(cuid())
+  institutionId      String
+  issueId            String
+  authorId           String
+  authorMembershipId String
+  content            String
+  visibility         NoteVisibility
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  institution      Institution           @relation(fields: [institutionId], references: [id], onDelete: Restrict)
+  issue            Issue                 @relation(fields: [issueId, institutionId], references: [id, institutionId], onDelete: Restrict)
+  author           User                  @relation("IssueNoteAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  authorMembership InstitutionMembership @relation("IssueNoteAuthorMembership", fields: [authorMembershipId, institutionId, authorId], references: [id, institutionId, userId], onDelete: Restrict)
+
+  @@index([institutionId, issueId, visibility, createdAt])
+  @@index([authorId, createdAt])
+  @@index([authorMembershipId, createdAt])
+}
+
+model AuditLog {
+  id                String   @id @default(cuid())
+  institutionId     String?
+  departmentId      String?
+  actorId           String?
+  actorMembershipId String?
+  action            String
+  entityType        String
+  entityId          String
+  metadata          Json?
+  createdAt         DateTime @default(now())
+
+  institution     Institution?           @relation(fields: [institutionId], references: [id], onDelete: Restrict)
+  department      Department?            @relation(fields: [departmentId, institutionId], references: [id, institutionId], onDelete: Restrict)
+  actor           User?                  @relation("AuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+  actorMembership InstitutionMembership? @relation("AuditActorMembership", fields: [actorMembershipId, institutionId, actorId], references: [id, institutionId, userId], onDelete: Restrict)
+
+  @@index([institutionId, createdAt])
+  @@index([departmentId, createdAt])
+  @@index([institutionId, entityType, entityId])
+  @@index([actorId, createdAt])
+  @@index([actorMembershipId, createdAt])
+}
+
+model Notification {
+  id                    String    @id @default(cuid())
+  institutionId         String
+  recipientId           String
+  recipientMembershipId String?
+  type                  String
+  title                 String
+  message               String
+  relatedEntityType     String?
+  relatedEntityId       String?
+  readAt                DateTime?
+  createdAt             DateTime  @default(now())
+
+  institution         Institution            @relation(fields: [institutionId], references: [id], onDelete: Restrict)
+  recipient           User                   @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Restrict)
+  recipientMembership InstitutionMembership? @relation("NotificationRecipientMembership", fields: [recipientMembershipId, institutionId, recipientId], references: [id, institutionId, userId], onDelete: Restrict)
+
+  @@index([institutionId, recipientId, readAt, createdAt])
+  @@index([relatedEntityType, relatedEntityId])
+  @@index([recipientMembershipId])
+}
