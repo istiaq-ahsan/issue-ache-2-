@@ -89,16 +89,15 @@ function MemberProfilePage() {
   const member = profile.data
   const teacher = member.role === 'TEACHER'
   const pendingRequest = requests.data.some((request) => request.status === 'PENDING')
-  const memberDepartments = member.departments.filter((department) => department.status === 'ACTIVE')
+  const memberDepartments = member.departments
   const activeDepartmentIds = new Set(memberDepartments.map((department) => department.id))
-  const availableDepartments = member.activeDepartments.filter((department) => {
+  const availableDepartments = member.availableDepartments.filter((department) => {
     if (!teacher || changeType === 'TEACHER_ADD') return !activeDepartmentIds.has(department.id)
     return activeDepartmentIds.has(department.id)
   })
   const selectedCurrentDepartment = memberDepartments.find((department) => department.id === currentDepartmentId)
-  const paidDepartmentIds = new Set(member.activeDepartments.map((department) => department.id))
   const replacementOptions = memberDepartments.filter((department) => (
-    department.id !== currentDepartmentId && paidDepartmentIds.has(department.id)
+    department.id !== currentDepartmentId
   ))
 
   return (
@@ -213,7 +212,7 @@ function MemberProfilePage() {
             )}
             {availableDepartments.length === 0 && changeType !== 'TEACHER_REMOVE' && (
               <p className="text-sm text-slate-600 sm:col-span-2">
-                {changeType === 'TEACHER_PRIMARY_CHANGE' ? 'You have no other active department memberships.' : 'No eligible active departments are available.'}
+                {changeType === 'TEACHER_PRIMARY_CHANGE' ? 'You have no other department memberships.' : 'No eligible departments are available.'}
               </p>
             )}
             <label className="grid gap-2 text-sm font-medium text-slate-700 sm:col-span-2">

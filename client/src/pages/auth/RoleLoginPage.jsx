@@ -239,7 +239,7 @@ function RoleLoginPage({ accountType }) {
 
   const registrationHref =
     accountType === 'institution'
-      ? '/institution/register'
+      ? '/pricing'
       : accountType === 'student' || accountType === 'teacher'
         ? `/${accountType}/register`
         : null

@@ -5,6 +5,7 @@ import {
   Bell,
   Building2,
   ClipboardCheck,
+  CreditCard,
   FileClock,
   LayoutDashboard,
   LogOut,
@@ -14,13 +15,15 @@ import {
   UsersRound,
   X,
 } from 'lucide-react'
-import { NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { Buildings } from '@phosphor-icons/react'
 import { useAuth } from '../../context/use-auth.js'
 import BrandLockup from '../../components/navigation/BrandLockup.jsx'
 import NotificationCenter from '../../components/NotificationCenter.jsx'
 import ThemeToggle from '../../components/ThemeToggle.jsx'
+import api from '../../lib/api.js'
 
 const workspaceConfig = {
   INSTITUTION: {
@@ -29,6 +32,8 @@ const workspaceConfig = {
       { label: 'Overview', icon: LayoutDashboard, path: (id) => `/institution/dashboard/${id}`, end: true },
       { label: 'Departments', icon: Building2, path: (id) => `/institution/dashboard/${id}/departments` },
       { label: 'Authorities', icon: UsersRound, path: (id) => `/institution/authorities?institutionId=${id}` },
+      { label: 'Subscription', icon: CreditCard, path: (id) => `/institution/subscriptions?institutionId=${id}` },
+      { label: 'Payments', icon: CreditCard, path: (id) => `/institution/payments?institutionId=${id}` },
       { label: 'Audit log', icon: FileClock, path: (id) => `/institution/dashboard/${id}/audit-logs` },
       { label: 'Notifications', icon: Bell, path: (id) => `/notifications/${id}` },
     ],
@@ -38,6 +43,7 @@ const workspaceConfig = {
     links: [
       { label: 'Overview', icon: LayoutDashboard, path: (id) => `/authority/institutions/${id}/dashboard`, end: true },
       { label: 'Registrations', icon: ClipboardCheck, path: (id) => `/authority/institutions/${id}/pending-registrations` },
+      { label: 'Students & teachers', icon: UsersRound, path: (id) => `/authority/institutions/${id}/members` },
       { label: 'Department requests', icon: Building2, path: (id) => `/authority/institutions/${id}/department-change-requests` },
       { label: 'Campus issues', icon: MessageSquareWarning, path: (id) => `/authority/institutions/${id}/issues` },
       { label: 'Audit log', icon: FileClock, path: (id) => `/authority/institutions/${id}/audit-logs` },
@@ -70,9 +76,35 @@ function WorkspaceLayout({ children, institutionId, role }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { logout, user } = useAuth()
+  const profile = useQuery({
+    queryKey: ['auth', 'me', user?.uid],
+    queryFn: async () => (await api.get('/auth/me')).data.data,
+    enabled: role === 'AUTHORITY' && Boolean(user),
+    retry: false,
+  })
   const config = workspaceConfig[role]
   const encodedInstitutionId = encodeURIComponent(institutionId)
+  const assignedDepartments = profile.data?.memberships
+    ?.find((membership) => membership.institutionId === institutionId && membership.role === 'AUTHORITY')
+    ?.authorityDepartments?.map(({ department }) => department) || []
+  const requestedDepartmentId = searchParams.get('departmentId') || ''
+  const selectedDepartmentId = assignedDepartments.some(({ id }) => id === requestedDepartmentId)
+    ? requestedDepartmentId
+    : ''
+
+  function withDepartment(path) {
+    if (role !== 'AUTHORITY' || !selectedDepartmentId) return path
+    return `${path}${path.includes('?') ? '&' : '?'}departmentId=${encodeURIComponent(selectedDepartmentId)}`
+  }
+
+  function selectDepartment(departmentId) {
+    const next = new URLSearchParams(searchParams)
+    if (departmentId) next.set('departmentId', departmentId)
+    else next.delete('departmentId')
+    setSearchParams(next, { replace: true })
+  }
 
   async function handleLogout() {
     try {
@@ -97,7 +129,7 @@ function WorkspaceLayout({ children, institutionId, role }) {
         end={end}
         key={label}
         onClick={() => isMobile && setMobileMenuOpen(false)}
-        to={path(encodedInstitutionId)}
+        to={withDepartment(path(encodedInstitutionId))}
       >
         <Icon aria-hidden="true" size={18} strokeWidth={1.8} />
         <span>{label}</span>
@@ -117,7 +149,14 @@ function WorkspaceLayout({ children, institutionId, role }) {
         />
         <div className="workspace-context">
           <span className="workspace-context-icon"><Activity aria-hidden="true" size={17} /></span>
-          <div><p>{config.label}</p><span>Institution workspace</span></div>
+          <div>
+            <p>{config.label}</p>
+            <span>
+              {role === 'AUTHORITY' && assignedDepartments.length
+                ? `Departments: ${assignedDepartments.map(({ name }) => name).join(', ')}`
+                : 'Institution workspace'}
+            </span>
+          </div>
         </div>
         <p className="workspace-nav-label">WORKSPACE</p>
         <nav aria-label={`${config.label} navigation`} className="workspace-nav">{navigation()}</nav>
@@ -141,9 +180,30 @@ function WorkspaceLayout({ children, institutionId, role }) {
           />
           <div className="workspace-topbar-context">
             <p>{config.label}</p>
-            <span>Issue Ache! <span aria-hidden="true">/</span> {config.label}</span>
+            <span>
+              Issue Ache! <span aria-hidden="true">/</span> {config.label}
+              {role === 'AUTHORITY' && assignedDepartments.length > 0
+                ? ` · ${selectedDepartmentId
+                  ? assignedDepartments.find(({ id }) => id === selectedDepartmentId)?.name
+                  : 'All my departments'}`
+                : ''}
+            </span>
           </div>
           <div className="workspace-topbar-actions">
+            {role === 'AUTHORITY' && assignedDepartments.length > 1 && (
+              <label               className="flex items-center gap-2 text-sm font-medium text-slate-600">
+                <span className="sr-only">Filter by department</span>
+                <select
+                  aria-label="Filter by department"
+                  className="min-h-10 max-w-52 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700"
+                  onChange={(event) => selectDepartment(event.target.value)}
+                  value={selectedDepartmentId}
+                >
+                  <option value="">All my departments</option>
+                  {assignedDepartments.map(({ id, name }) => <option key={id} value={id}>{name}</option>)}
+                </select>
+              </label>
+            )}
             <NotificationCenter institutionId={institutionId} />
             <ThemeToggle />
             <button aria-label="Sign out" className="icon-button workspace-mobile-signout" onClick={handleLogout} type="button">

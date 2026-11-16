@@ -50,8 +50,11 @@ function makeCreateDatabase({ departmentMembership = { departmentId: 'department
     issueHistory: {
       create: async ({ data }) => writes.push({ table: 'issueHistory.create', data }),
     },
-    institutionMembership: {
-      findMany: async () => [{ id: 'authority-membership', userId: 'authority-user' }],
+    authorityDepartment: {
+      findMany: async () => [{
+        departmentId: 'department-1',
+        authorityMembership: { id: 'authority-membership', userId: 'authority-user' },
+      }],
     },
     notification: {
       createMany: async ({ data }) => writes.push({ table: 'notification.createMany', data }),
@@ -178,6 +181,66 @@ test('list applies institution and audience filters for members and both audienc
   await listIssues('institution-1', 'AUTHORITY', {}, database)
   assert.equal(where.institutionId, 'institution-1')
   assert.equal('audience' in where, false)
+})
+
+test('Authority issue queries are department-scoped and reject out-of-scope filters', async () => {
+  let where
+  const database = {
+    issue: {
+      findMany: async (args) => { where = args.where; return [] },
+    },
+  }
+  await listIssues(
+    'institution-1',
+    'AUTHORITY',
+    { departmentId: 'department-1' },
+    database,
+    { departmentIds: ['department-1', 'department-2'] },
+  )
+  assert.equal(where.departmentId, 'department-1')
+  await assert.rejects(
+    listIssues(
+      'institution-1',
+      'AUTHORITY',
+      { departmentId: 'department-outside' },
+      database,
+      { departmentIds: ['department-1'] },
+    ),
+    (error) => error.statusCode === 404,
+  )
+})
+
+test('Authority issue detail and status mutation include the department scope', async () => {
+  let detailWhere
+  await assert.rejects(
+    getIssue('institution-1', 'issue-1', 'AUTHORITY', {
+      issue: {
+        findFirst: async ({ where }) => { detailWhere = where; return null },
+      },
+    }, { departmentIds: ['department-2'] }),
+    (error) => error.statusCode === 404,
+  )
+  assert.deepEqual(detailWhere.departmentId, { in: ['department-2'] })
+
+  let mutationWhere
+  const database = {
+    $transaction: async (callback) => callback({
+      issue: {
+        findFirst: async ({ where }) => { mutationWhere = where; return null },
+      },
+    }),
+  }
+  await assert.rejects(
+    updateIssueStatus(
+      'institution-1',
+      'issue-1',
+      actor,
+      { status: 'IN_PROGRESS' },
+      { database, scope: { departmentIds: ['department-2'] } },
+    ),
+    (error) => error.statusCode === 404,
+  )
+  assert.deepEqual(mutationWhere.departmentId, { in: ['department-2'] })
 })
 
 test('issue detail is tenant-scoped and exposes only public notes to members', async () => {

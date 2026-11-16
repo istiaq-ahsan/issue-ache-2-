@@ -14,33 +14,34 @@ const createDepartmentChangeSchema = z.discriminatedUnion('changeType', [
     changeType: z.literal('STUDENT_CHANGE'),
     requestedDepartmentId: z.string().trim().min(1).max(128),
     reason: z.string().trim().min(1).max(2000),
-  }),
+  }).strict(),
   z.object({
     changeType: z.literal('TEACHER_ADD'),
     requestedDepartmentId: z.string().trim().min(1).max(128),
     reason: z.string().trim().min(1).max(2000),
-  }),
+  }).strict(),
   z.object({
     changeType: z.literal('TEACHER_REMOVE'),
     currentDepartmentId: z.string().trim().min(1).max(128),
     replacementDepartmentId: z.string().trim().min(1).max(128).optional(),
     reason: z.string().trim().min(1).max(2000),
-  }),
+  }).strict(),
   z.object({
     changeType: z.literal('TEACHER_PRIMARY_CHANGE'),
     requestedDepartmentId: z.string().trim().min(1).max(128),
     reason: z.string().trim().min(1).max(2000),
-  }),
+  }).strict(),
 ])
 
 const departmentChangeDecisionSchema = z.object({
   decision: z.enum(['APPROVED', 'REJECTED']),
-})
+}).strict()
 
 const departmentChangeListQuerySchema = z.object({
   status: z.enum(['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED']).optional(),
   role: z.enum(['STUDENT', 'TEACHER']).optional(),
-})
+  departmentId: z.string().trim().min(1).max(128).optional(),
+}).strict()
 
 module.exports = {
   createDepartmentChangeSchema,

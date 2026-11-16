@@ -7,6 +7,7 @@ const ApiError = require('../utils/api-error')
 const { createAuditLogController } = require('../controllers/audit-log.controller')
 const validateRequest = require('../validators/validate-request')
 const { auditLogListQuerySchema } = require('../validators/notification.validators')
+const { attachAuthorityScope } = require('../middlewares/authority-scope')
 
 function requireAuditViewer(req, res, next) {
   if (
@@ -27,10 +28,11 @@ function createAuditLogRouter({
   authenticate = requireAuth,
   authorizeInstitution = requireInstitutionAccess({ allowAdministrator: true }),
   authorizeViewer = requireAuditViewer,
+  attachScope = attachAuthorityScope(),
   controller = createAuditLogController(),
 } = {}) {
   const router = express.Router()
-  const authorize = [authenticate, authorizeInstitution, authorizeViewer]
+  const authorize = [authenticate, authorizeInstitution, authorizeViewer, attachScope]
 
   router.get(
     '/:institutionId',

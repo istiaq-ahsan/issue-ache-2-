@@ -33,7 +33,7 @@ function LoginPage() {
         </nav>
 
         <div className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-sm">
-          <Link className="font-semibold text-blue-700 underline" to="/institution/register">
+          <Link className="font-semibold text-blue-700 underline" to="/pricing">
             Register an institution
           </Link>
           <Link className="font-semibold text-blue-700 underline" to="/student/register">

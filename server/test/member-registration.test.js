@@ -4,6 +4,8 @@ const { createApp } = require('../src/app')
 const { createRequireInstitutionAccess } = require('../src/middlewares/auth')
 const {
   decideRegistration,
+  getPendingRegistration,
+  listPendingRegistrations,
   lookupInstitutionDepartments,
   registerStudent,
   registerTeacher,
@@ -28,6 +30,7 @@ function registrationDatabase({
   planCode = 'PRO',
 } = {}) {
   const writes = []
+  const advisoryLocks = []
   const activeSubscription = {
     id: 'subscription-1',
     institutionId: 'institution-1',
@@ -41,7 +44,10 @@ function registrationDatabase({
     findFirst: async () => activeSubscription,
   }
   const transaction = {
-    $queryRaw: async () => [],
+    $queryRaw: async (strings, ...values) => {
+      advisoryLocks.push({ query: strings.join('?'), values })
+      return [{ '?column?': true }]
+    },
     subscription,
     user: {
       create: async ({ data }) => {
@@ -55,7 +61,12 @@ function registrationDatabase({
         return membershipCreate({ data })
       },
       count: async () => memberCount,
-      findMany: async () => authorities,
+    },
+    authorityDepartment: {
+      findMany: async () => authorities.map(({ id, userId }) => ({
+        departmentId: 'department-1',
+        authorityMembership: { id, userId },
+      })),
     },
     department: {
       findFirst: async () => ({ id: 'department-1', name: 'Engineering' }),
@@ -93,7 +104,7 @@ function registrationDatabase({
     },
     $transaction: async (callback) => callback(transaction),
   }
-  return { database, writes }
+  return { database, writes, advisoryLocks }
 }
 
 function authorityMembership(overrides = {}) {
@@ -167,6 +178,35 @@ test('institution lookup returns every department without department billing fil
   assert.deepEqual(departmentFilter, { institutionId: 'institution-1' })
 })
 
+test('Authority registration lists and decisions are scoped to requested departments', async () => {
+  let listWhere
+  await listPendingRegistrations(
+    'institution-1',
+    undefined,
+    {
+      institutionMembership: {
+        findMany: async ({ where }) => { listWhere = where; return [] },
+      },
+    },
+    { departmentIds: ['department-1'] },
+  )
+  assert.deepEqual(listWhere.requestedDepartmentId, { in: ['department-1'] })
+
+  await assert.rejects(
+    getPendingRegistration(
+      'institution-1',
+      'membership-1',
+      {
+        institutionMembership: {
+          findFirst: async () => null,
+        },
+      },
+      { departmentIds: ['department-1'] },
+    ),
+    (error) => error.statusCode === 404,
+  )
+})
+
 test('invalid Institution Code is rejected', async () => {
   await assert.rejects(
     lookupInstitutionDepartments('UNKNOWN', {
@@ -233,6 +273,20 @@ test('a legacy locked department remains available for registration', async () =
   assert.equal(result.status, 'PENDING')
 })
 
+test('student registration uses a Prisma-deserializable member-limit advisory lock', async () => {
+  const { database, advisoryLocks } = registrationDatabase()
+
+  await registerStudent(studentInput, {
+    database,
+    firebaseAuth: { createUser: async () => ({ uid: 'firebase-student-1' }) },
+  })
+
+  assert.equal(advisoryLocks.length, 1)
+  assert.match(advisoryLocks[0].query, /WITH advisory_lock AS MATERIALIZED/)
+  assert.match(advisoryLocks[0].query, /SELECT TRUE\s+FROM advisory_lock/)
+  assert.deepEqual(advisoryLocks[0].values, ['member-limit:institution-1'])
+})
+
 test('Student registration creates Firebase identity and pending membership without storing password', async () => {
   const { database, writes } = registrationDatabase()
   let firebaseInput
@@ -246,7 +300,7 @@ test('Student registration creates Firebase identity and pending membership with
     },
   })
 
-  test('registration notifies active Authorities in the same institution', async () => {
+  test('registration notifies Authorities assigned to the requested department', async () => {
     const { database, writes } = registrationDatabase({
       authorities: [
         { id: 'authority-membership-1', userId: 'authority-user-1' },
@@ -262,6 +316,7 @@ test('Student registration creates Firebase identity and pending membership with
     const notifications = writes.find(({ table }) => table === 'notifications').data
     assert.equal(notifications.length, 2)
     assert.equal(notifications[0].recipientMembershipId, 'authority-membership-1')
+    assert.equal(notifications[0].departmentId, 'department-1')
     assert.equal(notifications[0].relatedEntityType, 'InstitutionMembership')
   })
 

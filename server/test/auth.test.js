@@ -357,3 +357,37 @@ test('GET /api/auth/me returns the PostgreSQL identity for a verified token', as
     )
   }
 })
+
+test('auth context selects authority departments from institution memberships', async () => {
+  const user = createAuthenticatedUser()
+  let query
+  const database = {
+    user: {
+      findUnique: async (args) => {
+        query = args
+        return user
+      },
+    },
+  }
+  const firebaseAuth = {
+    verifyIdToken: async () => ({ uid: 'firebase-user-1' }),
+  }
+  const authenticate = createRequireAuth({
+    firebaseAuth: () => firebaseAuth,
+    database,
+  })
+
+  const { error } = await runMiddleware(
+    authenticate,
+    createRequest({ authorization: 'Bearer valid-token' }),
+  )
+
+  assert.equal(error, undefined)
+  const membershipSelect = query.select.memberships.select
+  assert.ok(membershipSelect.authorityDepartments)
+  assert.ok(membershipSelect.departmentMemberships.select)
+  assert.equal(
+    Object.hasOwn(membershipSelect.departmentMemberships, 'authorityDepartments'),
+    false,
+  )
+})

@@ -1,4 +1,5 @@
 const ApiError = require('../utils/api-error')
+const { ensureAuthorityDepartmentInScope } = require('../middlewares/authority-scope')
 
 function getDatabase() {
   return require('../config/prisma')
@@ -10,6 +11,41 @@ function requestNotFound() {
 
 function conflict(message, code = 'DEPARTMENT_CHANGE_NOT_ALLOWED') {
   return new ApiError(409, code, message)
+}
+
+function decisionDepartmentId(request) {
+  return request.requestedDepartmentId ||
+    request.replacementDepartmentId ||
+    request.currentDepartmentId
+}
+
+function visibleDepartmentScope(scope) {
+  if (!Array.isArray(scope?.departmentIds)) return {}
+  return {
+    OR: [
+      { requestedDepartmentId: { in: scope.departmentIds } },
+      { currentDepartmentId: { in: scope.departmentIds } },
+      { replacementDepartmentId: { in: scope.departmentIds } },
+    ],
+  }
+}
+
+function decisionDepartmentScope(scope) {
+  if (!Array.isArray(scope?.departmentIds)) return {}
+  return {
+    OR: [
+      { requestedDepartmentId: { in: scope.departmentIds } },
+      {
+        requestedDepartmentId: null,
+        replacementDepartmentId: { in: scope.departmentIds },
+      },
+      {
+        requestedDepartmentId: null,
+        replacementDepartmentId: null,
+        currentDepartmentId: { in: scope.departmentIds },
+      },
+    ],
+  }
 }
 
 function validateRoleForType(role, changeType) {
@@ -170,14 +206,42 @@ async function createDepartmentChangeRequest(
         select: { id: true, status: true, changeType: true, requestedAt: true },
       })
 
-      const authorities = await transaction.institutionMembership.findMany({
-        where: { institutionId, role: 'AUTHORITY', status: 'ACTIVE', deletedAt: null },
-        select: { id: true, userId: true },
-      })
+      const notificationDepartmentIds = [...new Set(
+        [currentDepartmentId, requestedDepartmentId, replacementDepartmentId].filter(Boolean),
+      )]
+      const assignments = notificationDepartmentIds.length
+        ? await transaction.authorityDepartment.findMany({
+            where: {
+              institutionId,
+              departmentId: { in: notificationDepartmentIds },
+              authorityMembership: {
+                role: 'AUTHORITY',
+                status: 'ACTIVE',
+                deletedAt: null,
+              },
+            },
+            select: {
+              departmentId: true,
+              authorityMembership: { select: { id: true, userId: true } },
+            },
+          })
+        : []
+      const notifiedMemberships = new Map()
+      for (const assignment of assignments) {
+        const authority = assignment.authorityMembership
+        if (!notifiedMemberships.has(authority.id)) {
+          notifiedMemberships.set(authority.id, {
+            ...authority,
+            departmentId: assignment.departmentId,
+          })
+        }
+      }
+      const authorities = [...notifiedMemberships.values()]
       if (authorities.length > 0) {
         await transaction.notification.createMany({
           data: authorities.map((authority) => ({
             institutionId,
+            departmentId: authority.departmentId,
             recipientId: authority.userId,
             recipientMembershipId: authority.id,
             type: 'DEPARTMENT_CHANGE_REQUEST_PENDING',
@@ -188,6 +252,23 @@ async function createDepartmentChangeRequest(
           })),
         })
       }
+
+      await transaction.auditLog.create({
+        data: {
+          institutionId,
+          departmentId: requestedDepartmentId || currentDepartmentId,
+          actorId: userId,
+          actorMembershipId: membershipId,
+          action: 'DEPARTMENT_CHANGE_REQUEST_SUBMITTED',
+          entityType: 'DepartmentChangeRequest',
+          entityId: request.id,
+          metadata: {
+            changeType: input.changeType,
+            currentDepartmentId,
+            requestedDepartmentId,
+          },
+        },
+      })
 
       return request
     })
@@ -252,14 +333,32 @@ async function listMemberDepartmentChanges(institutionId, membershipId, database
 
 async function listAuthorityDepartmentChanges(
   institutionId,
-  { status, role } = {},
+  { status, role, departmentId } = {},
   database = getDatabase(),
+  scope = null,
 ) {
+  if (departmentId) ensureAuthorityDepartmentInScope(scope, departmentId)
+  const departmentScope = visibleDepartmentScope(scope)
+  const departmentFilter = departmentId
+    ? {
+        AND: [{
+          AND: [{
+            OR: [
+              { requestedDepartmentId: departmentId },
+              { currentDepartmentId: departmentId },
+              { replacementDepartmentId: departmentId },
+            ],
+          }],
+        }],
+      }
+    : {}
   const requests = await database.departmentChangeRequest.findMany({
     where: {
       institutionId,
       ...(status ? { status } : {}),
       ...(role ? { membership: { role } } : {}),
+      ...departmentScope,
+      ...departmentFilter,
     },
     orderBy: { requestedAt: 'desc' },
     select: requestSelection(),
@@ -267,9 +366,15 @@ async function listAuthorityDepartmentChanges(
   return requests.map(serializeRequest)
 }
 
-async function getAuthorityDepartmentChange(institutionId, requestId, database = getDatabase()) {
+async function getAuthorityDepartmentChange(
+  institutionId,
+  requestId,
+  database = getDatabase(),
+  scope = null,
+) {
+  const departmentScope = visibleDepartmentScope(scope)
   const request = await database.departmentChangeRequest.findFirst({
-    where: { id: requestId, institutionId },
+    where: { id: requestId, institutionId, ...departmentScope },
     select: requestSelection(),
   })
   if (!request) throw requestNotFound()
@@ -286,7 +391,12 @@ async function cancelMemberDepartmentChange(
   return database.$transaction(async (transaction) => {
     const request = await transaction.departmentChangeRequest.findFirst({
       where: { id: requestId, institutionId, membershipId, requestedById: userId, status: 'PENDING' },
-      select: { id: true, changeType: true },
+      select: {
+        id: true,
+        changeType: true,
+        currentDepartmentId: true,
+        requestedDepartmentId: true,
+      },
     })
     if (!request) throw requestNotFound()
 
@@ -307,6 +417,7 @@ async function cancelMemberDepartmentChange(
     await transaction.auditLog.create({
       data: {
         institutionId,
+        departmentId: request.requestedDepartmentId || request.currentDepartmentId,
         actorId: userId,
         actorMembershipId: membershipId,
         action: 'DEPARTMENT_CHANGE_REQUEST_CANCELLED',
@@ -457,11 +568,12 @@ async function decideDepartmentChange(
   requestId,
   reviewer,
   decision,
-  { database = getDatabase(), now = new Date() } = {},
+  { database = getDatabase(), now = new Date(), scope = null } = {},
 ) {
   return database.$transaction(async (transaction) => {
+    const decisionScope = decisionDepartmentScope(scope)
     const request = await transaction.departmentChangeRequest.findFirst({
-      where: { id: requestId, institutionId, status: 'PENDING' },
+      where: { id: requestId, institutionId, status: 'PENDING', ...decisionScope },
       select: {
         id: true,
         institutionId: true,
@@ -480,6 +592,13 @@ async function decideDepartmentChange(
       },
     })
     if (!request) throw requestNotFound()
+    const targetDepartmentId = decisionDepartmentId(request)
+    if (
+      Array.isArray(scope?.departmentIds) &&
+      !scope.departmentIds.includes(targetDepartmentId)
+    ) {
+      throw requestNotFound()
+    }
     if (request.requestedById === reviewer.userId) {
       throw new ApiError(403, 'SELF_REVIEW_NOT_ALLOWED', 'You cannot review your own department change request')
     }
@@ -498,7 +617,7 @@ async function decideDepartmentChange(
     }
 
     const updated = await transaction.departmentChangeRequest.updateMany({
-      where: { id: requestId, institutionId, status: 'PENDING' },
+      where: { id: requestId, institutionId, status: 'PENDING', ...decisionScope },
       data: {
         status: decision,
         reviewedById: reviewer.userId,
@@ -517,6 +636,7 @@ async function decideDepartmentChange(
     await transaction.notification.create({
       data: {
         institutionId,
+        departmentId: targetDepartmentId,
         recipientId: request.requestedById,
         recipientMembershipId: request.membershipId,
         type: `DEPARTMENT_CHANGE_REQUEST_${decision}`,
@@ -530,6 +650,7 @@ async function decideDepartmentChange(
     await transaction.auditLog.create({
       data: {
         institutionId,
+        departmentId: targetDepartmentId,
         actorId: reviewer.userId,
         actorMembershipId: reviewer.membershipId,
         action: `DEPARTMENT_CHANGE_REQUEST_${decision}`,

@@ -50,6 +50,8 @@ function createDepartmentChangeController({
       const requests = await listAuthority(
         req.auth.institutionId,
         req.validated.query,
+        undefined,
+        req.scope,
       )
       return sendSuccess(res, { requests })
     }),
@@ -57,6 +59,8 @@ function createDepartmentChangeController({
       const request = await getAuthority(
         req.auth.institutionId,
         req.params.requestId,
+        undefined,
+        req.scope,
       )
       return sendSuccess(res, { request })
     }),
@@ -66,6 +70,7 @@ function createDepartmentChangeController({
         req.params.requestId,
         { userId: req.auth.user.id, membershipId: req.auth.membership.id },
         req.validated.body.decision,
+        { scope: req.scope },
       )
       return sendSuccess(res, { request }, {
         message: `Department change request ${request.status.toLowerCase()}`,

@@ -220,6 +220,7 @@ model Department {
   payments                     Payment[]
   auditLogs                    AuditLog[]
   issues                       Issue[]
+  notifications                Notification[]
   currentForChangeRequests     DepartmentChangeRequest[] @relation("CurrentDepartment")
   requestedForChangeRequests   DepartmentChangeRequest[] @relation("RequestedDepartment")
   replacementForChangeRequests DepartmentChangeRequest[] @relation("ReplacementDepartment")
@@ -496,6 +497,7 @@ model AuditLog {
 model Notification {
   id                    String    @id @default(cuid())
   institutionId         String
+  departmentId          String?
   recipientId           String
   recipientMembershipId String?
   type                  String
@@ -507,10 +509,12 @@ model Notification {
   createdAt             DateTime  @default(now())
 
   institution         Institution            @relation(fields: [institutionId], references: [id], onDelete: Restrict)
+  department          Department?             @relation(fields: [departmentId, institutionId], references: [id, institutionId], onDelete: Restrict)
   recipient           User                   @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Restrict)
   recipientMembership InstitutionMembership? @relation("NotificationRecipientMembership", fields: [recipientMembershipId, institutionId, recipientId], references: [id, institutionId, userId], onDelete: Restrict)
 
   @@index([institutionId, recipientId, readAt, createdAt])
   @@index([relatedEntityType, relatedEntityId])
   @@index([recipientMembershipId])
+  @@index([institutionId, departmentId, recipientId, createdAt])
 }

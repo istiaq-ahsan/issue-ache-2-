@@ -35,7 +35,7 @@ function MemberRegistrationPage({ role }) {
     name: z.string().trim().min(1, 'Enter your full name.').max(200),
     email: z.string().trim().email('Enter a valid email address.').max(320),
     phone: z.string().trim().min(1, 'Enter your phone number.').max(40),
-    departmentId: z.string().min(1, 'Select an active department.'),
+    departmentId: z.string().min(1, 'Select a department.'),
     password: z.string().min(8, 'Password must be at least 8 characters.').max(128),
   }), [details])
   const form = useForm({
@@ -174,7 +174,7 @@ function MemberRegistrationPage({ role }) {
             <div className="rounded-lg bg-blue-50 p-4 text-sm text-blue-900 sm:col-span-2" role="status">
               <p className="font-semibold">{institutionLookup.data.institution.name}</p>
               {departments.length === 0 ? (
-                <p className="mt-1">This institution has no currently active departments available for registration.</p>
+                <p className="mt-1">This institution has no departments available for registration.</p>
               ) : (
                 <label className="mt-3 grid gap-2 font-medium">
                   Department
@@ -184,7 +184,7 @@ function MemberRegistrationPage({ role }) {
                       onChange: (event) => updateField('departmentId', event.target.value),
                     })}
                   >
-                    <option value="">Select an active department</option>
+                    <option value="">Select a department</option>
                     {departments.map((department) => (
                       <option key={department.id} value={department.id}>{department.name}</option>
                     ))}

@@ -35,6 +35,8 @@ function createIssueController({
         req.auth.institutionId,
         req.auth.membership.role,
         req.validated.query,
+        undefined,
+        req.scope,
       )
       return sendSuccess(res, { issues })
     }),
@@ -43,6 +45,8 @@ function createIssueController({
         req.auth.institutionId,
         req.params.issueId,
         req.auth.membership.role,
+        undefined,
+        req.scope,
       )
       return sendSuccess(res, { issue })
     }),
@@ -52,6 +56,7 @@ function createIssueController({
         req.params.issueId,
         { userId: req.auth.user.id, membershipId: req.auth.membership.id },
         req.validated.body,
+        { scope: req.scope },
       )
       return sendSuccess(res, { issue }, { message: 'Issue status updated' })
     }),
@@ -61,6 +66,7 @@ function createIssueController({
         req.params.issueId,
         { userId: req.auth.user.id, membershipId: req.auth.membership.id },
         req.validated.body,
+        { scope: req.scope },
       )
       return sendSuccess(res, { note }, {
         statusCode: 201,
@@ -73,6 +79,7 @@ function createIssueController({
         req.params.issueId,
         { userId: req.auth.user.id, membershipId: req.auth.membership.id },
         req.validated.body.reason,
+        { scope: req.scope },
       )
       return sendSuccess(res, { issue }, { message: 'Issue archived' })
     }),

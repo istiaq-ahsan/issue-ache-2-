@@ -264,7 +264,7 @@ function HowHero({ prefersReducedMotion }) {
 
           <span>Explore each step</span>
 
-          <Link to="/institution/register">
+          <Link to="/pricing">
             Start with your institution
             <ArrowRight aria-hidden="true" size={15} />
           </Link>

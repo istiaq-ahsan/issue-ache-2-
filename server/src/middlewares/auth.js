@@ -2,6 +2,7 @@ const { getFirebaseAuth } = require('../config/firebase-admin')
 const ApiError = require('../utils/api-error')
 const asyncHandler = require('../utils/async-handler')
 const { ensureActiveSubscription } = require('../services/subscription.service')
+const { attachAuthorityScope } = require('./authority-scope')
 
 function getPrisma() {
   return require('../config/prisma')
@@ -93,6 +94,15 @@ function createRequireAuth({
             },
             requestedDepartment: {
               select: { id: true, name: true },
+            },
+            authorityDepartments: {
+              orderBy: { department: { name: 'asc' } },
+              select: {
+                departmentId: true,
+                department: {
+                  select: { id: true, name: true },
+                },
+              },
             },
             departmentMemberships: {
               where: { isActive: true },
@@ -374,80 +384,18 @@ function requireRole(...allowedRoles) {
   }
 }
 
-function createRequireDepartmentAccess({ database = getPrisma } = {}) {
-  return asyncHandler(async (req, res, next) => {
-    if (!req.auth?.membership || !req.auth?.institutionId) {
-      throw new ApiError(
-        400,
-        'INSTITUTION_CONTEXT_REQUIRED',
-        'Institution access must be verified before department access',
-      )
-    }
-
-    const departmentId = req.auth.departmentId || resolveDepartmentId(req)
-    if (!departmentId) {
-      throw new ApiError(
-        400,
-        'DEPARTMENT_CONTEXT_REQUIRED',
-        'Select a department using the route or X-Department-Id header',
-      )
-    }
-
-    if (req.auth.membership.role !== 'AUTHORITY') {
-      const departmentMembership = req.auth.membership.departmentMemberships.find(
-        ({ departmentId: memberDepartmentId }) => memberDepartmentId === departmentId,
-      )
-
-      if (!departmentMembership) {
-        throw new ApiError(
-          403,
-          'DEPARTMENT_ACCESS_DENIED',
-          'You do not have active access to this department',
-        )
-      }
-
-      req.auth.department = departmentMembership.department
-      req.auth.departmentMembership = departmentMembership
-      return next()
-    }
-
-    const department = await resolveDatabase(database).department.findFirst({
-      where: {
-        id: departmentId,
-        institutionId: req.auth.institutionId,
-      },
-      select: { id: true, name: true },
-    })
-
-    if (!department) {
-      throw new ApiError(
-        403,
-        'DEPARTMENT_ACCESS_DENIED',
-        'The selected department was not found in this institution',
-      )
-    }
-
-    req.auth.department = department
-    return next()
-  })
-}
-
-function requireDepartmentAccess(options) {
-  return createRequireDepartmentAccess(options)
-}
-
 const requireAuth = createRequireAuth()
 
 module.exports = {
-  createRequireDepartmentAccess,
   createRequireActiveSubscription,
   createRequireAuth,
+  createRequireDepartmentAccess: attachAuthorityScope,
   createRequireInstitutionAdministrator,
   createRequireInstitutionAccess,
   createVerifyFirebaseToken,
   requireAuth,
   requireActiveSubscription,
-  requireDepartmentAccess,
+  requireDepartmentAccess: attachAuthorityScope,
   requireInstitutionAdministrator,
   requireInstitutionAccess,
   requireRole,

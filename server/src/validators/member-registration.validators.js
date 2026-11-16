@@ -22,7 +22,8 @@ const registrationDecisionSchema = z.object({
 
 const registrationListQuerySchema = z.object({
   role: z.enum(['STUDENT', 'TEACHER']).optional(),
-})
+  departmentId: z.string().trim().min(1).max(128).optional(),
+}).strict()
 
 module.exports = {
   createRegistrationSchema,

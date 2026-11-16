@@ -4,8 +4,7 @@ import AuthorityManagementPage from '../members/AuthorityManagementPage.jsx'
 const sectionDetails = {
   departments: {
     title: 'Department management',
-    description:
-      'Create departments, manage their status, and review department subscriptions.',
+    description: 'Create, edit, and delete departments. Departments have no separate activation or payment.',
   },
   authorities: {
     title: 'Authority management',

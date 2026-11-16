@@ -4,6 +4,7 @@ const {
   createAuthority,
   deleteAuthority,
   listAuthorities,
+  replaceAuthorityDepartments,
   setAuthorityEnabled,
   updateAuthority,
 } = require('../services/authority.service')
@@ -14,6 +15,7 @@ function createAuthorityController({
   update = updateAuthority,
   setEnabled = setAuthorityEnabled,
   remove = deleteAuthority,
+  replaceDepartments = replaceAuthorityDepartments,
 } = {}) {
   return {
     create: asyncHandler(async (req, res) => {
@@ -59,6 +61,17 @@ function createAuthorityController({
       )
       return sendSuccess(res, result, {
         message: result.warning || 'Authority account deleted',
+      })
+    }),
+    replaceDepartments: asyncHandler(async (req, res) => {
+      const departments = await replaceDepartments(
+        req.auth.institutionId,
+        req.params.membershipId,
+        req.validated.body.departmentIds,
+        req.auth.user.id,
+      )
+      return sendSuccess(res, { departments }, {
+        message: 'Authority department assignments updated',
       })
     }),
   }

@@ -1,4 +1,8 @@
 const ApiError = require('../utils/api-error')
+const {
+  ensureAuthorityDepartmentInScope,
+  getDepartmentScopeWhere,
+} = require('../middlewares/authority-scope')
 
 function getDatabase() {
   return require('../config/prisma')
@@ -21,6 +25,7 @@ function serializeAuditLog(entry) {
   return {
     id: entry.id,
     institutionId: entry.institutionId,
+    departmentId: entry.departmentId,
     actor: entry.actor,
     action: entry.action,
     entityType: entry.entityType,
@@ -34,9 +39,13 @@ async function listAuditLogs(
   institutionId,
   filters = {},
   database = getDatabase(),
+  scope = null,
 ) {
+  if (filters.departmentId) ensureAuthorityDepartmentInScope(scope, filters.departmentId)
   const where = {
     institutionId,
+    ...getDepartmentScopeWhere(scope),
+    ...(filters.departmentId ? { departmentId: filters.departmentId } : {}),
     ...(filters.action ? { action: { contains: filters.action, mode: 'insensitive' } } : {}),
     ...(filters.entityType ? { entityType: filters.entityType } : {}),
     ...(filters.entityId ? { entityId: filters.entityId } : {}),
@@ -61,6 +70,7 @@ async function listAuditLogs(
       select: {
         id: true,
         institutionId: true,
+        departmentId: true,
         actorId: true,
         action: true,
         entityType: true,
@@ -80,12 +90,18 @@ async function listAuditLogs(
   }
 }
 
-async function getAuditLog(institutionId, auditLogId, database = getDatabase()) {
+async function getAuditLog(
+  institutionId,
+  auditLogId,
+  database = getDatabase(),
+  scope = null,
+) {
   const entry = await database.auditLog.findFirst({
-    where: { id: auditLogId, institutionId },
+    where: { id: auditLogId, institutionId, ...getDepartmentScopeWhere(scope) },
     select: {
       id: true,
       institutionId: true,
+      departmentId: true,
       actorId: true,
       action: true,
       entityType: true,

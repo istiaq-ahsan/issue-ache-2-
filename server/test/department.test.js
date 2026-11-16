@@ -47,6 +47,8 @@ function createDatabase({ references = {} } = {}) {
     database: {
       $transaction: async (callback) => callback(transaction),
       department: transaction.department,
+      departmentMembership: { count: async () => 0 },
+      issue: { count: async () => 0 },
     },
     isDeleted: () => deleted,
   }
@@ -135,7 +137,7 @@ test('department details retain legacy billing records as read-only history', as
     name: 'Science',
     createdAt: new Date(),
     updatedAt: new Date(),
-    _count: { memberships: 0, issues: 0, authorityAssignments: 0 },
+    authorityAssignments: [],
     subscriptions: [{ id: 'legacy-subscription' }],
     payments: [{ id: 'legacy-payment' }],
   })

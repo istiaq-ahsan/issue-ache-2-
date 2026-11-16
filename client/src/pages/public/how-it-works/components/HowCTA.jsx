@@ -34,7 +34,7 @@ function HowCTA({ entranceVariants }) {
       <div className="how-cta-actions">
         <Link
           className="how-cta-primary"
-          to="/institution/register"
+          to="/pricing"
         >
           Register your institution
           <ArrowRight aria-hidden="true" size={16} />

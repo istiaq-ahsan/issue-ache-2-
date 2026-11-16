@@ -7,10 +7,7 @@ function isActiveMembership(membership, role) {
 }
 
 function hasEligibleDepartment(membership) {
-  return membership.departmentMemberships?.some(
-    ({ department }) =>
-      department.status === 'ACTIVE' && department.subscriptions?.length > 0,
-  )
+  return membership.departmentMemberships?.length > 0
 }
 
 function getInstitutionIdFromPath(accountType, from) {

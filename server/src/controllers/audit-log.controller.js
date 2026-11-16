@@ -14,11 +14,18 @@ function createAuditLogController({
       const result = await list(
         req.auth.institutionId,
         req.validated.query,
+        undefined,
+        req.scope,
       )
       return sendSuccess(res, result)
     }),
     get: asyncHandler(async (req, res) => {
-      const auditLog = await get(req.auth.institutionId, req.params.auditLogId)
+      const auditLog = await get(
+        req.auth.institutionId,
+        req.params.auditLogId,
+        undefined,
+        req.scope,
+      )
       return sendSuccess(res, { auditLog })
     }),
   }

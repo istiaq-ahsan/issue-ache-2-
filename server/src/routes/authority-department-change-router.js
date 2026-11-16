@@ -6,6 +6,7 @@ const {
   requireRole,
 } = require('../middlewares/auth')
 const { createDepartmentChangeController } = require('../controllers/department-change.controller')
+const { attachAuthorityScope } = require('../middlewares/authority-scope')
 const validateRequest = require('../validators/validate-request')
 const {
   departmentChangeDecisionSchema,
@@ -17,10 +18,11 @@ function createAuthorityDepartmentChangeRouter({
   authorizeInstitution = requireInstitutionAccess(),
   authorizeAuthority = requireRole('AUTHORITY'),
   requireSubscription = requireActiveSubscription,
+  attachScope = attachAuthorityScope(),
   controller = createDepartmentChangeController(),
 } = {}) {
   const router = express.Router()
-  const authorize = [authenticate, authorizeInstitution, authorizeAuthority]
+  const authorize = [authenticate, authorizeInstitution, authorizeAuthority, attachScope]
 
   router.get(
     '/institutions/:institutionId/department-change-requests',

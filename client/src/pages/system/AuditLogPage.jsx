@@ -1,15 +1,20 @@
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import api from '../../lib/api.js'
 
 function AuditLogPage({ isAuthority = false }) {
   const { institutionId } = useParams()
+  const [searchParams] = useSearchParams()
+  const departmentId = isAuthority ? searchParams.get('departmentId') || undefined : undefined
   const [filters, setFilters] = useState({ action: '', entityType: '', from: '', to: '', offset: 0 })
   const auditLogs = useQuery({
-    queryKey: ['audit-logs', institutionId, filters],
+    queryKey: ['audit-logs', institutionId, filters, departmentId],
     queryFn: async () => {
-      const params = Object.fromEntries(Object.entries(filters).filter(([, value]) => value))
+      const params = {
+        ...Object.fromEntries(Object.entries(filters).filter(([, value]) => value)),
+        ...(departmentId ? { departmentId } : {}),
+      }
       return (await api.get(`/audit-logs/${institutionId}`, { params })).data.data
     },
     retry: false,

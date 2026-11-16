@@ -23,13 +23,14 @@ const createIssueSchema = z.object({
 }).strict()
 
 const issueListQuerySchema = z.object({
+  departmentId: z.string().trim().min(1).max(128).optional(),
   category: issueCategorySchema.optional(),
   priority: issuePrioritySchema.optional(),
   status: issueStatusSchema.optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
   archived: z.enum(['true', 'false', 'all']).optional(),
-}).refine(
+}).strict().refine(
   ({ from, to }) => !from || !to || from <= to,
   { message: 'The from date must be before or equal to the to date', path: ['from'] },
 )

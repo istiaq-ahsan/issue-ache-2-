@@ -11,6 +11,7 @@ const {
   authorityStatusSchema,
   authorityUpdateSchema,
 } = require('../validators/authority.validators')
+const { authorityDepartmentsSchema } = require('../validators/authority-department.validators')
 
 function createAuthorityRouter({
   authenticate = requireAuth,
@@ -44,6 +45,14 @@ function createAuthorityRouter({
     requireSubscription,
     validateRequest({ body: authorityStatusSchema }),
     controller.setEnabled,
+  )
+  router.put(
+    '/:institutionId/authorities/:membershipId/departments',
+    authenticate,
+    authorizeAdministrator,
+    requireSubscription,
+    validateRequest({ body: authorityDepartmentsSchema }),
+    controller.replaceDepartments,
   )
   router.delete(
     '/:institutionId/authorities/:membershipId',

@@ -49,8 +49,7 @@ function IssueCreatePage({ role }) {
   })
   const departments = useMemo(() => {
     if (!profile.data) return []
-    const paidIds = new Set(profile.data.activeDepartments.map(({ id }) => id))
-    return profile.data.departments.filter(({ id, status }) => status === 'ACTIVE' && paidIds.has(id))
+    return profile.data.departments
   }, [profile.data])
   const createIssue = useMutation({
     mutationFn: async (data) => (await api.post(`/issues/${institutionId}`, data)).data.data.issue,
@@ -80,7 +79,7 @@ function IssueCreatePage({ role }) {
           </div>
         ) : departments.length === 0 ? (
           <p className="mt-6 rounded-lg border border-dashed border-slate-300 p-4 text-slate-600">
-            You need an active paid department membership to report an issue.
+            You need an active membership in at least one department to report an issue.
           </p>
         ) : (
           <form className="mt-6 grid gap-4 sm:grid-cols-2" noValidate onSubmit={form.handleSubmit((values) => createIssue.mutate(values))}>

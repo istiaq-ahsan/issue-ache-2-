@@ -6,6 +6,7 @@ const {
   requireRole,
 } = require('../middlewares/auth')
 const { createIssueController } = require('../controllers/issue.controller')
+const { attachAuthorityScope } = require('../middlewares/authority-scope')
 const validateRequest = require('../validators/validate-request')
 const {
   archiveIssueSchema,
@@ -22,6 +23,7 @@ function createIssueRouter({
   authorizeReporter = requireRole('STUDENT', 'TEACHER'),
   authorizeAuthority = requireRole('AUTHORITY'),
   requireSubscription = requireActiveSubscription,
+  attachScope = attachAuthorityScope(),
   controller = createIssueController(),
 } = {}) {
   const router = express.Router()
@@ -32,6 +34,7 @@ function createIssueRouter({
     '/:institutionId',
     ...institutionAccess,
     authorizeViewer,
+    attachScope,
     validateRequest({ query: issueListQuerySchema }),
     controller.list,
   )
@@ -47,12 +50,14 @@ function createIssueRouter({
     '/:institutionId/:issueId',
     ...institutionAccess,
     authorizeViewer,
+    attachScope,
     controller.get,
   )
   router.patch(
     '/:institutionId/:issueId/status',
     ...institutionAccess,
     authorizeAuthority,
+    attachScope,
     ...activeSubscription,
     validateRequest({ body: issueStatusUpdateSchema }),
     controller.updateStatus,
@@ -61,6 +66,7 @@ function createIssueRouter({
     '/:institutionId/:issueId/notes',
     ...institutionAccess,
     authorizeAuthority,
+    attachScope,
     ...activeSubscription,
     validateRequest({ body: issueNoteSchema }),
     controller.addNote,
@@ -69,6 +75,7 @@ function createIssueRouter({
     '/:institutionId/:issueId/archive',
     ...institutionAccess,
     authorizeAuthority,
+    attachScope,
     ...activeSubscription,
     validateRequest({ body: archiveIssueSchema }),
     controller.archive,

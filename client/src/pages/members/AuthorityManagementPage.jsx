@@ -6,14 +6,14 @@ import api from '../../lib/api.js'
 import { confirmAction } from '../../lib/confirm-action.js'
 
 function getErrorMessage(error, fallback) {
-  return error.response?.data?.error?.message || fallback
+  return error.apiMessage || error.response?.data?.error?.message || error.message || fallback
 }
 
 function AuthorityManagementPage({ institutionId }) {
   const queryClient = useQueryClient()
-  const [newAuthority, setNewAuthority] = useState({ name: '', email: '', password: '' })
+  const [newAuthority, setNewAuthority] = useState({ name: '', email: '', password: '', departmentIds: [] })
   const [editingId, setEditingId] = useState(null)
-  const [editValues, setEditValues] = useState({ name: '', email: '' })
+  const [editValues, setEditValues] = useState({ name: '', email: '', departmentIds: [] })
   const [formError, setFormError] = useState('')
 
   const authorities = useQuery({
@@ -22,33 +22,50 @@ function AuthorityManagementPage({ institutionId }) {
       (await api.get(`/institutions/${institutionId}/authorities`)).data.data.authorities,
     retry: false,
   })
+  const departments = useQuery({
+    queryKey: ['departments', institutionId],
+    queryFn: async () =>
+      (await api.get(`/institutions/${institutionId}/departments`)).data.data.departments,
+  })
 
   async function refreshAuthorities() {
     await queryClient.invalidateQueries({ queryKey: ['authorities', institutionId] })
   }
 
   const createAuthority = useMutation({
-    mutationFn: async (account) =>
-      (await api.post(`/institutions/${institutionId}/authorities`, account)).data.data.authority,
+    mutationFn: async (account) => {
+      if (account.departmentIds.length === 0) throw new Error('Assign the Authority to at least one department.')
+      return (await api.post(`/institutions/${institutionId}/authorities`, account)).data.data.authority
+    },
     onSuccess: async () => {
-      setNewAuthority({ name: '', email: '', password: '' })
+      setNewAuthority({ name: '', email: '', password: '', departmentIds: [] })
       setFormError('')
-      toast.success('Authority account created. Deliver the initial credentials securely.')
+      toast.success('Authority account created with department access.')
       await refreshAuthorities()
     },
     onError: (error) => setFormError(getErrorMessage(error, 'Could not create the Authority account.')),
   })
 
   const updateAuthority = useMutation({
-    mutationFn: async ({ id, values }) =>
-      (await api.patch(`/institutions/${institutionId}/authorities/${id}`, values))
-        .data.data.authority,
+    mutationFn: async ({ id, values }) => {
+      if (values.departmentIds.length === 0) throw new Error('An Authority must have at least one department.')
+      await api.put(`/authorities/${encodeURIComponent(id)}/departments`, {
+        departmentIds: values.departmentIds,
+      })
+      return (await api.patch(`/institutions/${institutionId}/authorities/${id}`, {
+        name: values.name,
+        email: values.email,
+      })).data.data.authority
+    },
     onSuccess: async () => {
       setEditingId(null)
       toast.success('Authority account updated')
       await refreshAuthorities()
     },
-    onError: (error) => toast.error(getErrorMessage(error, 'Could not update the Authority account.')),
+    onError: async (error) => {
+      toast.error(getErrorMessage(error, 'Could not update the Authority account.'))
+      await refreshAuthorities()
+    },
   })
 
   const setAuthorityEnabled = useMutation({
@@ -82,7 +99,15 @@ function AuthorityManagementPage({ institutionId }) {
 
   function beginEdit(authority) {
     setEditingId(authority.id)
-    setEditValues({ name: authority.user.name, email: authority.user.email })
+    setEditValues({
+      name: authority.user.name,
+      email: authority.user.email,
+      departmentIds: authority.departments.map(({ id }) => id),
+    })
+  }
+
+  function selectedDepartmentIds(event) {
+    return Array.from(event.target.selectedOptions, (option) => option.value)
   }
 
   function submitEdit(event, id) {
@@ -114,8 +139,7 @@ function AuthorityManagementPage({ institutionId }) {
         </p>
         <h1 className="mt-2 text-3xl font-semibold text-slate-950">Authority accounts</h1>
         <p className="mt-2 max-w-2xl text-slate-600">
-          Create and manage accounts for this institution. Initial passwords are not stored by the application;
-          deliver them to the Authority through a secure channel.
+          Create institution Authorities and assign one or more departments. Initial passwords are not stored; deliver them securely.
         </p>
       </header>
 
@@ -134,6 +158,24 @@ function AuthorityManagementPage({ institutionId }) {
             required
             value={newAuthority.name}
           />
+        </label>
+        <label className="grid gap-2 text-sm font-medium text-slate-700 sm:col-span-2">
+          Departments
+          <select
+            aria-describedby="new-authority-departments-help"
+            className="min-h-28 rounded-lg border border-slate-300 bg-white px-3 py-2"
+            disabled={departments.isLoading || departments.isError}
+            multiple
+            onChange={(event) => setNewAuthority({ ...newAuthority, departmentIds: selectedDepartmentIds(event) })}
+            required
+            value={newAuthority.departmentIds}
+          >
+            {(departments.data || []).map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
+          </select>
+          <span className="text-xs font-normal text-slate-500" id="new-authority-departments-help">
+            Select at least one department. Use Ctrl or Command to select multiple.
+          </span>
+          {departments.isError && <span className="text-sm text-red-700" role="alert">Could not load departments for assignment.</span>}
         </label>
         <label className="grid gap-2 text-sm font-medium text-slate-700">
           Email
@@ -162,7 +204,7 @@ function AuthorityManagementPage({ institutionId }) {
         {formError && <p className="text-sm text-red-700 sm:col-span-2" role="alert">{formError}</p>}
         <button
           className="min-h-11 justify-self-start rounded-lg bg-blue-700 px-5 font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
-          disabled={createAuthority.isPending}
+          disabled={createAuthority.isPending || departments.isLoading || departments.isError || departments.data?.length === 0}
           type="submit"
         >
           {createAuthority.isPending ? 'Creating account…' : 'Create Authority'}
@@ -213,8 +255,22 @@ function AuthorityManagementPage({ institutionId }) {
                           value={editValues.email}
                         />
                       </label>
+                      <label className="grid gap-2 text-sm font-medium text-slate-700 sm:col-span-2">
+                        Departments
+                        <select
+                          className="min-h-28 rounded-lg border border-slate-300 bg-white px-3 py-2"
+                          disabled={departments.isLoading || departments.isError}
+                          multiple
+                          onChange={(event) => setEditValues({ ...editValues, departmentIds: selectedDepartmentIds(event) })}
+                          required
+                          value={editValues.departmentIds}
+                        >
+                          {(departments.data || []).map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
+                        </select>
+                        <span className="text-xs font-normal text-slate-500">An Authority must remain assigned to at least one department.</span>
+                      </label>
                       <div className="flex gap-3 sm:col-span-2">
-                        <button className="rounded-lg bg-blue-700 px-4 py-2 font-semibold text-white disabled:opacity-60" disabled={updateAuthority.isPending} type="submit">
+                        <button className="rounded-lg bg-blue-700 px-4 py-2 font-semibold text-white disabled:opacity-60" disabled={updateAuthority.isPending || departments.isLoading || departments.isError} type="submit">
                           {updateAuthority.isPending ? 'Saving…' : 'Save changes'}
                         </button>
                         <button className="rounded-lg border border-slate-300 px-4 py-2 font-semibold text-slate-700" onClick={() => setEditingId(null)} type="button">
@@ -228,6 +284,11 @@ function AuthorityManagementPage({ institutionId }) {
                         <div>
                           <h3 className="font-semibold text-slate-950">{authority.user.name}</h3>
                           <p className="mt-1 text-sm text-slate-600">{authority.user.email}</p>
+                          <div aria-label={`Departments assigned to ${authority.user.name}`} className="mt-3 flex flex-wrap gap-1.5">
+                            {authority.departments.map((department) => (
+                              <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-800" key={department.id}>{department.name}</span>
+                            ))}
+                          </div>
                           <span className={`mt-3 inline-block rounded-full px-3 py-1 text-xs font-semibold ${
                             isDeleted
                               ? 'bg-slate-100 text-slate-700'

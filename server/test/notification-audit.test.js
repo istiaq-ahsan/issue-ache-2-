@@ -152,6 +152,69 @@ test('mark all read updates only the current recipient within the institution', 
   assert.equal(result.markedRead, 4)
 })
 
+test('Authority notification reads and updates are department-scoped', async () => {
+  let listWhere
+  await listNotifications(
+    'institution-1',
+    'authority-user',
+    {},
+    {
+      notification: {
+        findMany: async ({ where }) => { listWhere = where; return [] },
+        count: async () => 0,
+      },
+    },
+    { departmentIds: ['department-1'] },
+  )
+  assert.deepEqual(listWhere.departmentId, { in: ['department-1'] })
+
+  let updateWhere
+  let fallbackWhere
+  await assert.rejects(
+    markNotificationRead(
+      'institution-1',
+      'authority-user',
+      'notification-2',
+      {
+        scope: { departmentIds: ['department-1'] },
+        database: {
+          notification: {
+            updateMany: async ({ where }) => { updateWhere = where; return { count: 0 } },
+            findFirst: async ({ where }) => { fallbackWhere = where; return null },
+          },
+        },
+      },
+    ),
+    (error) => error.statusCode === 404,
+  )
+  assert.deepEqual(updateWhere.departmentId, { in: ['department-1'] })
+  assert.deepEqual(fallbackWhere.departmentId, { in: ['department-1'] })
+})
+
+test('Authority notification filters stay within one assigned department', async () => {
+  let where
+  await listNotifications(
+    'institution-1',
+    'authority-user',
+    { departmentId: 'department-1' },
+    {
+      notification: {
+        findMany: async ({ where: query }) => { where = query; return [] },
+        count: async () => 0,
+      },
+    },
+    { departmentIds: ['department-1', 'department-2'] },
+  )
+  assert.equal(where.departmentId, 'department-1')
+
+  await assert.rejects(
+    listNotifications('institution-1', 'authority-user', { departmentId: 'department-3' }, {}, {
+      departmentIds: ['department-1', 'department-2'],
+    }),
+    (error) => error.statusCode === 404,
+  )
+})
+
 test('audit listing is tenant-filtered and returns redacted metadata without credential keys', async () => {
   let findArgs
   let countArgs
@@ -166,6 +229,50 @@ test('audit listing is tenant-filtered and returns redacted metadata without cre
   assert.equal(result.auditLogs[0].metadata.newStatus, 'IN_PROGRESS')
   assert.equal('password' in result.auditLogs[0].metadata.nested, false)
   assert.equal(result.total, 1)
+})
+
+test('Authority audit listing and detail are department-scoped', async () => {
+  let listWhere
+  await listAuditLogs(
+    'institution-1',
+    {},
+    {
+      auditLog: {
+        findMany: async ({ where }) => { listWhere = where; return [] },
+        count: async () => 0,
+      },
+    },
+    { departmentIds: ['department-1'] },
+  )
+  assert.deepEqual(listWhere.departmentId, { in: ['department-1'] })
+
+  let detailWhere
+  await assert.rejects(
+    getAuditLog(
+      'institution-1',
+      'audit-2',
+      {
+        auditLog: {
+          findFirst: async ({ where }) => { detailWhere = where; return null },
+        },
+      },
+      { departmentIds: ['department-1'] },
+    ),
+    (error) => error.statusCode === 404,
+  )
+  assert.deepEqual(detailWhere.departmentId, { in: ['department-1'] })
+})
+
+test('Authority audit filters reject unassigned departments', async () => {
+  await assert.rejects(
+    listAuditLogs(
+      'institution-1',
+      { departmentId: 'department-2' },
+      {},
+      { departmentIds: ['department-1'] },
+    ),
+    (error) => error.statusCode === 404,
+  )
 })
 
 test('audit detail lookup is institution-scoped and metadata sanitizer redacts nested credentials', async () => {
@@ -220,6 +327,12 @@ before(async () => {
     list: (req, res) => res.json({ institutionId: req.auth.institutionId }),
     get: (req, res) => res.json({ auditLogId: req.params.auditLogId }),
   }
+  const attachScope = (req, res, next) => {
+    req.scope = req.auth.membership?.role === 'AUTHORITY'
+      ? { departmentIds: ['department-1'] }
+      : { departmentIds: null }
+    return next()
+  }
   function authorizeAudit(req, res, next) {
     if (req.auth.institutionAdministrator || req.auth.membership.role === 'AUTHORITY') return next()
     return next(new ApiError(403, 'ROLE_NOT_AUTHORIZED', 'No audit access'))
@@ -227,8 +340,19 @@ before(async () => {
   app.use('/api', express.json(), createApiRouter({
     authenticate,
     institutionRouterOptions: {
-      notificationRouterOptions: { authenticate, authorizeInstitution, controller: notificationController },
-      auditLogRouterOptions: { authenticate, authorizeInstitution, authorizeViewer: authorizeAudit, controller: auditController },
+      notificationRouterOptions: {
+        authenticate,
+        authorizeInstitution,
+        attachScope,
+        controller: notificationController,
+      },
+      auditLogRouterOptions: {
+        authenticate,
+        authorizeInstitution,
+        authorizeViewer: authorizeAudit,
+        attachScope,
+        controller: auditController,
+      },
     },
   }))
   app.use(errorHandler)

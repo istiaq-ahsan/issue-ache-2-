@@ -54,6 +54,10 @@ before(async () => {
       authorityDepartmentChangeRouterOptions: {
         authenticate,
         authorizeInstitution,
+        attachScope: (req, res, next) => {
+          req.scope = { departmentIds: ['department-1'] }
+          return next()
+        },
         requireSubscription: (req, res, next) => next(),
         controller: departmentChangeController,
       },

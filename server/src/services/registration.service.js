@@ -274,8 +274,15 @@ async function createRegistrationRecords(database, input, firebaseUid, plan, now
       `registration-name:${normalizeInstitutionName(input.institutionName)}`,
       `registration-contact:${normalizeEmail(input.contactEmail)}`,
     ].sort()
+
     for (const lockKey of lockKeys) {
-      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`
+      await transaction.$queryRaw`
+        WITH advisory_lock AS MATERIALIZED (
+          SELECT pg_advisory_xact_lock(hashtext(${lockKey}))
+        )
+        SELECT TRUE
+        FROM advisory_lock
+      `
     }
 
     await assertRegistrationAvailable(transaction, {

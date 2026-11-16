@@ -2,6 +2,10 @@ const { getFirebaseAuth } = require('../config/firebase-admin')
 const ApiError = require('../utils/api-error')
 const { notifyInstitutionAdministrator } = require('../utils/institution-notification')
 const { assertPlanLimit, ensureActiveSubscription } = require('./subscription.service')
+const {
+  assertDepartmentsBelongToInstitution,
+  replaceAuthorityDepartments,
+} = require('./authority-department.service')
 
 function getDatabase() {
   return require('../config/prisma')
@@ -38,6 +42,7 @@ function serializeAuthority(membership) {
     deletedAt: membership.deletedAt,
     createdAt: membership.createdAt,
     updatedAt: membership.updatedAt,
+    departments: (membership.authorityDepartments || []).map(({ department }) => department),
     user: {
       name: membership.user.name,
       email: membership.user.email,
@@ -58,6 +63,12 @@ function getAuthoritySelection() {
         firebaseUid: true,
         name: true,
         email: true,
+      },
+    },
+    authorityDepartments: {
+      orderBy: { department: { name: 'asc' } },
+      select: {
+        department: { select: { id: true, name: true } },
       },
     },
   }
@@ -90,6 +101,11 @@ async function createAuthorityAccount(input, institutionId, actorId, database, f
     where: { institutionId, role: 'AUTHORITY', deletedAt: null },
   })
   assertPlanLimit(subscription, 'maxAuthorities', authorityCount)
+  const departmentIds = await assertDepartmentsBelongToInstitution(
+    institutionId,
+    input.departmentIds,
+    database,
+  )
 
   const email = normalizeEmail(input.email)
   const existingUser = await database.user.findUnique({
@@ -116,7 +132,13 @@ async function createAuthorityAccount(input, institutionId, actorId, database, f
 
   try {
     const membership = await database.$transaction(async (transaction) => {
-      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`authority-limit:${institutionId}`}))`
+      await transaction.$queryRaw`
+        WITH advisory_lock AS MATERIALIZED (
+          SELECT pg_advisory_xact_lock(hashtext(${`authority-limit:${institutionId}`}))
+        )
+        SELECT TRUE
+        FROM advisory_lock
+      `
       const currentSubscription = await ensureActiveSubscription(institutionId, {
         database: transaction,
       })
@@ -144,6 +166,20 @@ async function createAuthorityAccount(input, institutionId, actorId, database, f
         select: getAuthoritySelection(),
       })
 
+      await transaction.authorityDepartment.createMany({
+        data: departmentIds.map((departmentId) => ({
+          institutionId,
+          authorityMembershipId: createdMembership.id,
+          departmentId,
+          assignedById: actorId,
+        })),
+      })
+
+      const assignedMembership = await transaction.institutionMembership.findUnique({
+        where: { id: createdMembership.id },
+        select: getAuthoritySelection(),
+      })
+
       await transaction.auditLog.create({
         data: {
           institutionId,
@@ -154,6 +190,19 @@ async function createAuthorityAccount(input, institutionId, actorId, database, f
           metadata: { email },
         },
       })
+      for (const departmentId of departmentIds) {
+        await transaction.auditLog.create({
+          data: {
+            institutionId,
+            departmentId,
+            actorId,
+            action: 'AUTHORITY_DEPARTMENT_ASSIGNED',
+            entityType: 'InstitutionMembership',
+            entityId: createdMembership.id,
+            metadata: { departmentId },
+          },
+        })
+      }
       await notifyInstitutionAdministrator(transaction, {
         institutionId,
         type: 'AUTHORITY_CREATED',
@@ -163,7 +212,7 @@ async function createAuthorityAccount(input, institutionId, actorId, database, f
         relatedEntityId: createdMembership.id,
       })
 
-      return createdMembership
+      return assignedMembership
     })
 
     return serializeAuthority(membership)
@@ -222,6 +271,13 @@ async function updateAuthority(
     select: getAuthoritySelection(),
   })
   if (!current) throw authorityNotFoundError()
+  if (current.authorityDepartments?.length === 0) {
+    throw new ApiError(
+      409,
+      'DEPARTMENT_ASSIGNMENT_REQUIRED',
+      'An Authority must be assigned to at least one department',
+    )
+  }
 
   const data = {}
   if (input.name !== undefined) data.name = input.name
@@ -331,6 +387,13 @@ async function setAuthorityEnabled(
     select: getAuthoritySelection(),
   })
   if (!current || current.deletedAt) throw authorityNotFoundError()
+  if (enabled && current.authorityDepartments?.length === 0) {
+    throw new ApiError(
+      409,
+      'DEPARTMENT_ASSIGNMENT_REQUIRED',
+      'Assign the Authority to at least one department before enabling the account',
+    )
+  }
 
   const status = enabled ? 'ACTIVE' : 'INACTIVE'
   if (current.status !== status) {
@@ -474,6 +537,7 @@ module.exports = {
   createAuthority,
   deleteAuthority,
   listAuthorities,
+  replaceAuthorityDepartments,
   setAuthorityEnabled,
   updateAuthority,
 }

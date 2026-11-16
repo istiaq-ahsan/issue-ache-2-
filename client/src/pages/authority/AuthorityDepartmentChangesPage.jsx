@@ -1,16 +1,18 @@
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import api from '../../lib/api.js'
 
 function AuthorityDepartmentChangesPage() {
   const { institutionId } = useParams()
+  const [searchParams] = useSearchParams()
+  const departmentId = searchParams.get('departmentId') || ''
   const [status, setStatus] = useState('PENDING')
   const requests = useQuery({
-    queryKey: ['authority-department-changes', institutionId, status],
+    queryKey: ['authority-department-changes', institutionId, status, departmentId],
     queryFn: async () => (await api.get(
       `/authority/institutions/${institutionId}/department-change-requests`,
-      { params: status ? { status } : undefined },
+      { params: { ...(status ? { status } : {}), ...(departmentId ? { departmentId } : {}) } },
     )).data.data.requests,
     retry: false,
   })
@@ -23,7 +25,7 @@ function AuthorityDepartmentChangesPage() {
             Authority workspace
           </Link>
           <h1 className="mt-2 text-3xl font-semibold text-slate-950">Department change requests</h1>
-          <p className="mt-2 text-slate-600">Review member requests for your institution.</p>
+          <p className="mt-2 text-slate-600">Review requests linked to your assigned departments. Only the requested department’s Authority can decide.</p>
         </div>
         <label className="grid gap-2 text-sm font-medium text-slate-700">
           Request status

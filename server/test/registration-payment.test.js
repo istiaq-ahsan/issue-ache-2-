@@ -39,6 +39,7 @@ function createDatabase() {
     subscriptions: [],
     auditLogs: [],
     notifications: [],
+    advisoryLocks: [],
     nextId: 1,
   }
 
@@ -206,7 +207,13 @@ function createDatabase() {
     $transaction: (callback) =>
       callback({
         ...models,
-        $queryRaw: async () => [],
+        $queryRaw: async (query, ...values) => {
+          state.advisoryLocks.push({
+            query: query.join('?').replace(/\s+/gu, ' ').trim(),
+            values,
+          })
+          return []
+        },
       }),
     state,
   }
@@ -286,6 +293,15 @@ test('Basic trial provisions a disabled Firebase user then completes atomically 
   assert.equal(firebaseAuth.state.created[0].disabled, true)
   assert.deepEqual(firebaseAuth.state.enabled, [{ uid: 'firebase-1', disabled: false }])
   assert.equal(payment.state.verifyCalls, 0)
+  assert.deepEqual(
+    database.state.advisoryLocks.map(({ values }) => values[0]),
+    ['registration-contact:contact@example.edu', 'registration-name:north campus'],
+  )
+  assert.ok(database.state.advisoryLocks.every(({ query }) =>
+    query.includes('WITH advisory_lock AS MATERIALIZED') &&
+    query.includes('SELECT pg_advisory_xact_lock(hashtext(?))') &&
+    query.includes('SELECT TRUE FROM advisory_lock'),
+  ))
   assert.equal(database.state.payments.length, 0)
   assert.equal(database.state.users.length, 1)
   assert.equal(database.state.institutions.length, 1)

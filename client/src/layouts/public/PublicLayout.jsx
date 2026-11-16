@@ -99,6 +99,13 @@ function PublicLayout({ children }) {
           >
             How It Works
           </Link>
+          <Link
+            className="public-nav-link"
+            onClick={() => setMobileMenuOpen(false)}
+            to="/pricing"
+          >
+            Pricing
+          </Link>
         </nav>
         <div className="public-nav-actions">
           {showAuthActions &&
@@ -119,9 +126,12 @@ function PublicLayout({ children }) {
                 </button>
               </>
             ) : (
-              <Link className="public-login-link" to="/login">
-                Sign In <ArrowRight aria-hidden="true" size={15} />
-              </Link>
+              <>
+                <Link className="public-login-link" to="/login">Sign In</Link>
+                <Link className="public-login-link" to="/pricing">
+                  Get started <ArrowRight aria-hidden="true" size={15} />
+                </Link>
+              </>
             ))}
           <ThemeToggle />
           <button

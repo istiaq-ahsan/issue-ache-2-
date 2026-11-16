@@ -31,7 +31,7 @@ function AboutCTA({ entranceVariants }) {
         </p>
       </div>
 
-      <Link className="about-cta-action" to="/institution/register">
+      <Link className="about-cta-action" to="/pricing">
         Get started <ArrowRight aria-hidden="true" size={17} />
       </Link>
     </motion.section>

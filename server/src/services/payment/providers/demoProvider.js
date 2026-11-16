@@ -12,6 +12,9 @@ async function initiate({ payment }) {
     `/payment/demo/${encodeURIComponent(payment.id)}`,
     env.CLIENT_ORIGIN[0],
   )
+  if (payment.institutionId) {
+    redirectUrl.searchParams.set('institutionId', payment.institutionId)
+  }
 
   return {
     redirectUrl: redirectUrl.toString(),

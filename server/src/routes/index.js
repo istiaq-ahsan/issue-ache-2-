@@ -9,6 +9,9 @@ const createMemberRegistrationRouter = require('./member-registration-router')
 const createAuthorityRegistrationRouter = require('./authority-registration-router')
 const createMemberProfileRouter = require('./member-profile-router')
 const createAuthorityDepartmentChangeRouter = require('./authority-department-change-router')
+const createAuthorityDepartmentRouter = require('./authority-department-router')
+const createAuthorityMemberRouter = require('./authority-member-router')
+const createAuthorityDashboardRouter = require('./authority-dashboard-router')
 const createIssueRouter = require('./issue-router')
 const createNotificationRouter = require('./notification-router')
 const createAuditLogRouter = require('./audit-log-router')
@@ -84,6 +87,64 @@ function createApiRouter({
     controller:
       institutionRouterOptions?.authorityDepartmentChangeRouterOptions?.controller ||
       institutionRouterOptions?.departmentChangeController,
+  }))
+  router.use('/authority', createAuthorityDashboardRouter({
+    ...institutionRouterOptions?.authorityDashboardRouterOptions,
+    authenticate:
+      institutionRouterOptions?.authorityDashboardRouterOptions?.authenticate ||
+      institutionRouterOptions?.authenticate,
+    authorizeInstitution:
+      institutionRouterOptions?.authorityDashboardRouterOptions?.authorizeInstitution,
+    authorizeAuthority:
+      institutionRouterOptions?.authorityDashboardRouterOptions?.authorizeAuthority,
+    attachScope:
+      institutionRouterOptions?.authorityDashboardRouterOptions?.attachScope,
+    controller:
+      institutionRouterOptions?.authorityDashboardRouterOptions?.controller,
+  }))
+  router.use('/authority', createAuthorityMemberRouter({
+    role: 'STUDENT',
+    ...institutionRouterOptions?.authorityStudentRouterOptions,
+    authenticate:
+      institutionRouterOptions?.authorityStudentRouterOptions?.authenticate ||
+      institutionRouterOptions?.authenticate,
+    authorizeInstitution:
+      institutionRouterOptions?.authorityStudentRouterOptions?.authorizeInstitution,
+    authorizeAuthority:
+      institutionRouterOptions?.authorityStudentRouterOptions?.authorizeAuthority,
+    attachScope:
+      institutionRouterOptions?.authorityStudentRouterOptions?.attachScope,
+    requireSubscription:
+      institutionRouterOptions?.authorityStudentRouterOptions?.requireSubscription,
+    controller:
+      institutionRouterOptions?.authorityStudentRouterOptions?.controller,
+  }))
+  router.use('/authority', createAuthorityMemberRouter({
+    role: 'TEACHER',
+    ...institutionRouterOptions?.authorityTeacherRouterOptions,
+    authenticate:
+      institutionRouterOptions?.authorityTeacherRouterOptions?.authenticate ||
+      institutionRouterOptions?.authenticate,
+    authorizeInstitution:
+      institutionRouterOptions?.authorityTeacherRouterOptions?.authorizeInstitution,
+    authorizeAuthority:
+      institutionRouterOptions?.authorityTeacherRouterOptions?.authorizeAuthority,
+    attachScope:
+      institutionRouterOptions?.authorityTeacherRouterOptions?.attachScope,
+    requireSubscription:
+      institutionRouterOptions?.authorityTeacherRouterOptions?.requireSubscription,
+    controller:
+      institutionRouterOptions?.authorityTeacherRouterOptions?.controller,
+  }))
+  router.use(API_ROUTES.AUTHORITIES, createAuthorityDepartmentRouter({
+    ...institutionRouterOptions?.authorityDepartmentRouterOptions,
+    authenticate:
+      institutionRouterOptions?.authorityDepartmentRouterOptions?.authenticate ||
+      institutionRouterOptions?.authenticate ||
+      authenticate,
+    controller:
+      institutionRouterOptions?.authorityDepartmentRouterOptions?.controller ||
+      institutionRouterOptions?.authorityController,
   }))
   router.use('/institutions', createMemberProfileRouter({
     ...institutionRouterOptions?.memberProfileRouterOptions,

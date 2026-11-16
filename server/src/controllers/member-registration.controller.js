@@ -43,6 +43,9 @@ function createMemberRegistrationController({
       const registrations = await listPending(
         req.auth.institutionId,
         req.validated.query.role,
+        undefined,
+        req.scope,
+        req.validated.query.departmentId,
       )
       return sendSuccess(res, { registrations })
     }),
@@ -50,6 +53,8 @@ function createMemberRegistrationController({
       const registration = await getPending(
         req.auth.institutionId,
         req.params.membershipId,
+        undefined,
+        req.scope,
       )
       return sendSuccess(res, { registration })
     }),
@@ -62,6 +67,7 @@ function createMemberRegistrationController({
           membershipId: req.auth.membership.id,
         },
         req.validated.body.decision,
+        { scope: req.scope },
       )
       return sendSuccess(res, { registration: result }, {
         message: `Registration ${result.decision.toLowerCase()}`,

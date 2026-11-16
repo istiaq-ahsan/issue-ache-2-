@@ -1,29 +1,37 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import api from '../lib/api.js'
 
 function NotificationCenter({ institutionId }) {
   const [open, setOpen] = useState(false)
+  const [searchParams] = useSearchParams()
+  const departmentId = searchParams.get('departmentId') || undefined
   const queryClient = useQueryClient()
-  const queryKey = ['notifications', institutionId]
+  const queryKey = ['notifications', institutionId, departmentId]
   const notifications = useQuery({
     queryKey,
     queryFn: async () => (await api.get(`/notifications/${institutionId}`, {
-      params: { limit: 8 },
+      params: { limit: 8, ...(departmentId ? { departmentId } : {}) },
     })).data.data,
     retry: false,
   })
   const markRead = useMutation({
     mutationFn: async (notificationId) => api.patch(
       `/notifications/${institutionId}/${notificationId}/read`,
+      null,
+      { params: departmentId ? { departmentId } : undefined },
     ),
     onSuccess: async () => queryClient.invalidateQueries({ queryKey }),
     onError: (error) => toast.error(error.response?.data?.error?.message || 'Could not update notification.'),
   })
   const markAllRead = useMutation({
-    mutationFn: async () => api.patch(`/notifications/${institutionId}/read-all`),
+    mutationFn: async () => api.patch(
+      `/notifications/${institutionId}/read-all`,
+      null,
+      { params: departmentId ? { departmentId } : undefined },
+    ),
     onSuccess: async () => {
       toast.success('All notifications marked as read')
       await queryClient.invalidateQueries({ queryKey })

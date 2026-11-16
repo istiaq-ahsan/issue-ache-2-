@@ -34,7 +34,7 @@ function HomePage() {
             review, and resolve the issues that matter on campus.
           </p>
           <div className="home-actions">
-            <Link className="home-primary-action" to="/institution/register">
+            <Link className="home-primary-action" to="/pricing">
               Set up your institution <ArrowRight aria-hidden="true" size={17} />
             </Link>
             <Link className="home-secondary-action" to="/login">

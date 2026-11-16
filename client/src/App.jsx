@@ -33,6 +33,11 @@ import IssueCreatePage from './pages/issues/IssueCreatePage.jsx'
 import IssueDetailsPage from './pages/issues/IssueDetailsPage.jsx'
 import NotificationsPage from './pages/system/NotificationsPage.jsx'
 import AuditLogPage from './pages/system/AuditLogPage.jsx'
+import PricingPage from './pages/public/PricingPage.jsx'
+import InstitutionBillingPage from './pages/institution/InstitutionBillingPage.jsx'
+import DemoPaymentPage from './pages/payments/DemoPaymentPage.jsx'
+import PaymentResultPage from './pages/payments/PaymentResultPage.jsx'
+import AuthorityMembersPage from './pages/authority/AuthorityMembersPage.jsx'
 
 const INTRO_SESSION_KEY = 'issue-ache-intro-shown'
 let introDisplayDecision
@@ -71,7 +76,10 @@ function App() {
         <Route path="/dashboard" element={<PublicLayout><DashboardPage /></PublicLayout>} />
         <Route path="/about" element={<PublicLayout><AboutPage /></PublicLayout>} />
         <Route path="/how-it-works" element={<PublicLayout><HowItWorksPage /></PublicLayout>} />
+        <Route path="/pricing" element={<PublicLayout><PricingPage /></PublicLayout>} />
         <Route path="/institution/register" element={<AuthLayout><InstitutionRegisterPage /></AuthLayout>} />
+        <Route path="/payment/demo/:paymentId" element={<PublicLayout><DemoPaymentPage /></PublicLayout>} />
+        <Route path="/payment/result" element={<PublicLayout><PaymentResultPage /></PublicLayout>} />
         <Route path="/student/register" element={<AuthLayout><StudentRegisterPage /></AuthLayout>} />
         <Route path="/teacher/register" element={<AuthLayout><TeacherRegisterPage /></AuthLayout>} />
         <Route path="/login" element={<AuthLayout><LoginPage /></AuthLayout>} />
@@ -123,6 +131,10 @@ function App() {
         <Route
           path="/authority/institutions/:institutionId/dashboard"
           element={<AuthorityDashboardRoute />}
+        />
+        <Route
+          path="/authority/institutions/:institutionId/members"
+          element={<AuthorityMembersRoute />}
         />
         <Route
           path="/authority/institutions/:institutionId/issues"
@@ -179,6 +191,14 @@ function App() {
           }
         />
         <Route
+          path="/institution/subscriptions"
+          element={<InstitutionBillingRoute section="subscriptions" />}
+        />
+        <Route
+          path="/institution/payments"
+          element={<InstitutionBillingRoute section="payments" />}
+        />
+        <Route
           path="/institution/dashboard/:institutionId/departments"
           element={<InstitutionDepartmentListRoute />}
         />
@@ -223,6 +243,21 @@ function InstitutionManagementRoute({ section }) {
       requireInstitutionAdministrator
     >
       <InstitutionManagementPage institutionId={institutionId} section={section} />
+    </ProtectedRoute>
+  )
+}
+
+function InstitutionBillingRoute({ section }) {
+  const [searchParams] = useSearchParams()
+  const institutionId = searchParams.get('institutionId')
+  if (!institutionId) return <Navigate to="/institution/dashboard" replace />
+  return (
+    <ProtectedRoute
+      allowInstitutionAdministrator
+      institutionId={institutionId}
+      requireInstitutionAdministrator
+    >
+      <InstitutionBillingPage section={section} />
     </ProtectedRoute>
   )
 }
@@ -288,6 +323,15 @@ function AuthorityDashboardRoute() {
   return (
     <ProtectedRoute roles={['AUTHORITY']} institutionId={institutionId}>
       <AuthorityDashboardPage />
+    </ProtectedRoute>
+  )
+}
+
+function AuthorityMembersRoute() {
+  const { institutionId } = useParams()
+  return (
+    <ProtectedRoute roles={['AUTHORITY']} institutionId={institutionId}>
+      <AuthorityMembersPage />
     </ProtectedRoute>
   )
 }

@@ -20,6 +20,8 @@ function createNotificationController({
           ...req.validated.query,
           unreadOnly: req.validated.query.unreadOnly === 'true',
         },
+        undefined,
+        req.scope,
       )
       return sendSuccess(res, result)
     }),
@@ -28,6 +30,7 @@ function createNotificationController({
         req.auth.institutionId,
         req.auth.user.id,
         req.params.notificationId,
+        { scope: req.scope, departmentId: req.validated.query.departmentId },
       )
       return sendSuccess(res, { notification }, { message: 'Notification marked as read' })
     }),
@@ -35,6 +38,7 @@ function createNotificationController({
       const result = await markAllRead(
         req.auth.institutionId,
         req.auth.user.id,
+        { scope: req.scope, departmentId: req.validated.query.departmentId },
       )
       return sendSuccess(res, result, { message: 'All notifications marked as read' })
     }),

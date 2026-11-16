@@ -23,7 +23,7 @@ function InstitutionDashboardIndexPage() {
       {institutions.length === 0 ? (
         <p className="mt-5 rounded-xl border border-dashed border-slate-300 bg-white p-6 text-slate-600">
           This account does not administer an institution yet.{' '}
-          <Link className="font-semibold text-blue-700 underline" to="/institution/register">
+          <Link className="font-semibold text-blue-700 underline" to="/pricing">
             Register one
           </Link>
         </p>

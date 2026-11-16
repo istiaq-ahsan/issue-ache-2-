@@ -4,6 +4,8 @@ const {
   cancelMemberDepartmentChange,
   createDepartmentChangeRequest,
   decideDepartmentChange,
+  getAuthorityDepartmentChange,
+  listAuthorityDepartmentChanges,
 } = require('../src/services/department-change.service')
 const {
   getMemberProfile,
@@ -64,7 +66,12 @@ function requestDatabase({
   const transaction = {
     institutionMembership: {
       findFirst: async () => membership,
-      findMany: async () => [{ id: 'authority-membership', userId: 'authority-user' }],
+    },
+    authorityDepartment: {
+      findMany: async ({ where }) => (where.departmentId.in || []).map((departmentId) => ({
+        departmentId,
+        authorityMembership: { id: 'authority-membership', userId: 'authority-user' },
+      })),
     },
     department: {
       findFirst: async () => requestedDepartment,
@@ -78,6 +85,9 @@ function requestDatabase({
     },
     notification: {
       createMany: async ({ data }) => writes.push({ table: 'authorityNotifications', data }),
+    },
+    auditLog: {
+      create: async ({ data }) => writes.push({ table: 'audit', data }),
     },
   }
   return {
@@ -158,7 +168,7 @@ test('profile is scoped to the current active membership and exposes only profil
   assert.equal(profile.officialId, 'S-100')
   assert.equal(profile.institution.name, 'Campus')
   assert.equal(profile.departments[0].isPrimary, true)
-  assert.deepEqual(profile.activeDepartments, [{ id: 'department-next', name: 'Next' }])
+  assert.deepEqual(profile.availableDepartments, [{ id: 'department-next', name: 'Next' }])
 })
 
 test('profile updates are limited to the validated name and phone fields', async () => {
@@ -344,6 +354,68 @@ test('Teacher removing primary requires a distinct active replacement', async ()
   const data = writes.find(({ table }) => table === 'request').data
   assert.equal(data.requestedDepartmentId, null)
   assert.equal(data.replacementDepartmentId, 'department-other')
+})
+
+test('Authority can view requests tied to either department but only target scope can decide', async () => {
+  let listWhere
+  await listAuthorityDepartmentChanges(
+    'institution-1',
+    {},
+    {
+      departmentChangeRequest: {
+        findMany: async ({ where }) => { listWhere = where; return [] },
+      },
+    },
+    { departmentIds: ['department-current'] },
+  )
+  assert.deepEqual(listWhere.OR, [
+    { requestedDepartmentId: { in: ['department-current'] } },
+    { currentDepartmentId: { in: ['department-current'] } },
+    { replacementDepartmentId: { in: ['department-current'] } },
+  ])
+
+  let detailWhere
+  await getAuthorityDepartmentChange(
+    'institution-1',
+    'request-1',
+    {
+      departmentChangeRequest: {
+        findFirst: async ({ where }) => { detailWhere = where; return null },
+      },
+    },
+    { departmentIds: ['department-current'] },
+  ).catch((error) => {
+    assert.equal(error.statusCode, 404)
+  })
+  assert.equal(detailWhere.institutionId, 'institution-1')
+
+  let updateCalled = false
+  const database = {
+    $transaction: async (callback) => callback({
+      departmentChangeRequest: {
+        findFirst: async ({ where }) => {
+          const matches = where.OR.some((condition) =>
+            condition.requestedDepartmentId?.in?.includes('department-current') ||
+            (condition.requestedDepartmentId === null &&
+              condition.currentDepartmentId?.in?.includes('department-current')),
+          )
+          return matches ? changeRequest() : null
+        },
+        updateMany: async () => { updateCalled = true; return { count: 1 } },
+      },
+    }),
+  }
+  await assert.rejects(
+    decideDepartmentChange(
+      'institution-1',
+      'request-1',
+      reviewer,
+      'APPROVED',
+      { database, scope: { departmentIds: ['department-current'] } },
+    ),
+    (error) => error.statusCode === 404,
+  )
+  assert.equal(updateCalled, false)
 })
 
 test('Approval moves Student department memberships atomically and records reviewer, audit, and notification', async () => {

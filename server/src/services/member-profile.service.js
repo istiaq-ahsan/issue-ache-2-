@@ -86,7 +86,7 @@ async function getMemberProfile(
     select: { id: true, name: true },
   })
 
-  return { ...serializeProfile(membership), activeDepartments: availableDepartments }
+  return { ...serializeProfile(membership), availableDepartments }
 }
 
 async function updateMemberProfile(

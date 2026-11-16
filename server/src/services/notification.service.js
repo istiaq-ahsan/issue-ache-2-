@@ -1,4 +1,8 @@
 const ApiError = require('../utils/api-error')
+const {
+  ensureAuthorityDepartmentInScope,
+  getDepartmentScopeWhere,
+} = require('../middlewares/authority-scope')
 
 function getDatabase() {
   return require('../config/prisma')
@@ -15,6 +19,7 @@ function serializeNotification(notification) {
   return {
     id: notification.id,
     institutionId: notification.institutionId,
+    departmentId: notification.departmentId,
     type: notification.type,
     title: notification.title,
     message: notification.message,
@@ -28,12 +33,16 @@ function serializeNotification(notification) {
 async function listNotifications(
   institutionId,
   recipientId,
-  { unreadOnly = false, limit = 50, cursor } = {},
+  { unreadOnly = false, limit = 50, cursor, departmentId } = {},
   database = getDatabase(),
+  scope = null,
 ) {
+  if (departmentId) ensureAuthorityDepartmentInScope(scope, departmentId)
   const where = {
     institutionId,
     recipientId,
+    ...getDepartmentScopeWhere(scope),
+    ...(departmentId ? { departmentId } : {}),
     ...(unreadOnly ? { readAt: null } : {}),
   }
   const [notifications, unreadCount] = await Promise.all([
@@ -45,6 +54,7 @@ async function listNotifications(
       select: {
         id: true,
         institutionId: true,
+        departmentId: true,
         type: true,
         title: true,
         message: true,
@@ -55,7 +65,13 @@ async function listNotifications(
       },
     }),
     database.notification.count({
-      where: { institutionId, recipientId, readAt: null },
+      where: {
+        institutionId,
+        recipientId,
+        ...getDepartmentScopeWhere(scope),
+        ...(departmentId ? { departmentId } : {}),
+        readAt: null,
+      },
     }),
   ])
   return {
@@ -71,23 +87,33 @@ async function markNotificationRead(
   institutionId,
   recipientId,
   notificationId,
-  { database = getDatabase(), now = new Date() } = {},
+  { database = getDatabase(), now = new Date(), scope = null, departmentId } = {},
 ) {
+  if (departmentId) ensureAuthorityDepartmentInScope(scope, departmentId)
   const result = await database.notification.updateMany({
     where: {
       id: notificationId,
       institutionId,
       recipientId,
+      ...getDepartmentScopeWhere(scope),
+      ...(departmentId ? { departmentId } : {}),
       readAt: null,
     },
     data: { readAt: now },
   })
   if (result.count === 0) {
     const existing = await database.notification.findFirst({
-      where: { id: notificationId, institutionId, recipientId },
+      where: {
+        id: notificationId,
+        institutionId,
+        recipientId,
+        ...getDepartmentScopeWhere(scope),
+        ...(departmentId ? { departmentId } : {}),
+      },
       select: {
         id: true,
         institutionId: true,
+        departmentId: true,
         type: true,
         title: true,
         message: true,
@@ -101,10 +127,17 @@ async function markNotificationRead(
   }
 
   const notification = await database.notification.findFirst({
-    where: { id: notificationId, institutionId, recipientId },
+    where: {
+      id: notificationId,
+      institutionId,
+      recipientId,
+      ...getDepartmentScopeWhere(scope),
+      ...(departmentId ? { departmentId } : {}),
+    },
     select: {
       id: true,
       institutionId: true,
+      departmentId: true,
       type: true,
       title: true,
       message: true,
@@ -120,10 +153,17 @@ async function markNotificationRead(
 async function markAllNotificationsRead(
   institutionId,
   recipientId,
-  { database = getDatabase(), now = new Date() } = {},
+  { database = getDatabase(), now = new Date(), scope = null, departmentId } = {},
 ) {
+  if (departmentId) ensureAuthorityDepartmentInScope(scope, departmentId)
   const result = await database.notification.updateMany({
-    where: { institutionId, recipientId, readAt: null },
+    where: {
+      institutionId,
+      recipientId,
+      ...getDepartmentScopeWhere(scope),
+      ...(departmentId ? { departmentId } : {}),
+      readAt: null,
+    },
     data: { readAt: now },
   })
   return { markedRead: result.count, readAt: now }

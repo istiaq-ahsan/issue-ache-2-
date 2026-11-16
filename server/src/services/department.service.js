@@ -47,49 +47,93 @@ async function listDepartments(institutionId, database = getDatabase()) {
 }
 
 async function getDepartmentDetails(institutionId, departmentId, database = getDatabase()) {
-  const department = await database.department.findFirst({
-    where: { id: departmentId, institutionId },
-    select: {
-      ...departmentSelection(),
-      _count: {
-        select: {
-          memberships: true,
-          issues: true,
-          authorityAssignments: true,
+  const [department, students, teachers, issues] = await Promise.all([
+    database.department.findFirst({
+      where: { id: departmentId, institutionId },
+      select: {
+        ...departmentSelection(),
+        authorityAssignments: {
+          orderBy: { authorityMembership: { user: { name: 'asc' } } },
+          select: {
+            authorityMembership: {
+              select: {
+                id: true,
+                status: true,
+                deletedAt: true,
+                user: { select: { name: true, email: true } },
+              },
+            },
+          },
+        },
+        subscriptions: {
+          where: { departmentId: { not: null } },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            planName: true,
+            status: true,
+            startsAt: true,
+            endsAt: true,
+            createdAt: true,
+          },
+        },
+        payments: {
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            amount: true,
+            currency: true,
+            status: true,
+            provider: true,
+            transactionReference: true,
+            createdAt: true,
+          },
         },
       },
-      subscriptions: {
-        where: { departmentId: { not: null } },
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          planName: true,
-          status: true,
-          startsAt: true,
-          endsAt: true,
-          createdAt: true,
-        },
+    }),
+    database.departmentMembership.count({
+      where: {
+        institutionId,
+        departmentId,
+        isActive: true,
+        membership: { role: 'STUDENT', status: 'ACTIVE', deletedAt: null },
       },
-      payments: {
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          amount: true,
-          currency: true,
-          status: true,
-          provider: true,
-          transactionReference: true,
-          createdAt: true,
-        },
+    }),
+    database.departmentMembership.count({
+      where: {
+        institutionId,
+        departmentId,
+        isActive: true,
+        membership: { role: 'TEACHER', status: 'ACTIVE', deletedAt: null },
       },
-    },
-  })
+    }),
+    database.issue.count({ where: { institutionId, departmentId } }),
+  ])
   if (!department) throw departmentNotFound()
 
-  const { _count, subscriptions, payments, ...departmentDetails } = department
+  const {
+    authorityAssignments,
+    subscriptions,
+    payments,
+    ...departmentDetails
+  } = department
   return {
     ...departmentDetails,
-    usage: _count,
+    authorityAssignments: authorityAssignments
+      .filter(({ authorityMembership }) => !authorityMembership.deletedAt)
+      .map(({ authorityMembership }) => ({
+        id: authorityMembership.id,
+        status: authorityMembership.status,
+        user: authorityMembership.user,
+      })),
+    usage: {
+      students,
+      teachers,
+      issues,
+      authorities: authorityAssignments.filter(
+        ({ authorityMembership }) => !authorityMembership.deletedAt,
+      ).length,
+    },
     legacyBillingHistory: { subscriptions, payments },
   }
 }

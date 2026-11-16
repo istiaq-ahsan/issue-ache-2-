@@ -1,6 +1,10 @@
 const { getFirebaseAuth } = require('../config/firebase-admin')
 const ApiError = require('../utils/api-error')
 const { assertPlanLimit, ensureActiveSubscription } = require('./subscription.service')
+const {
+  ensureAuthorityDepartmentInScope,
+  getDepartmentScopeWhere,
+} = require('../middlewares/authority-scope')
 
 function getDatabase() {
   return require('../config/prisma')
@@ -139,7 +143,13 @@ async function registerMember(
 
   try {
     return await database.$transaction(async (transaction) => {
-      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-limit:${institution.id}`}))`
+      await transaction.$queryRaw`
+        WITH advisory_lock AS MATERIALIZED (
+          SELECT pg_advisory_xact_lock(hashtext(${`member-limit:${institution.id}`}))
+        )
+        SELECT TRUE
+        FROM advisory_lock
+      `
       const currentSubscription = await ensureActiveSubscription(institution.id, {
         database: transaction,
         now,
@@ -193,6 +203,7 @@ async function registerMember(
       await transaction.auditLog.create({
         data: {
           institutionId: institution.id,
+          departmentId: currentDepartment.id,
           actorId: user.id,
           actorMembershipId: membership.id,
           action: `${role}_REGISTRATION_SUBMITTED`,
@@ -206,20 +217,26 @@ async function registerMember(
         },
       })
 
-      const authorities = await transaction.institutionMembership.findMany({
+      const authorityAssignments = await transaction.authorityDepartment.findMany({
         where: {
           institutionId: institution.id,
-          role: 'AUTHORITY',
-          status: 'ACTIVE',
-          deletedAt: null,
+          departmentId: currentDepartment.id,
+          authorityMembership: {
+            role: 'AUTHORITY',
+            status: 'ACTIVE',
+            deletedAt: null,
+          },
         },
-        select: { id: true, userId: true },
+        select: {
+          authorityMembership: { select: { id: true, userId: true } },
+        },
       })
-
+      const authorities = authorityAssignments.map(({ authorityMembership }) => authorityMembership)
       if (authorities.length > 0) {
         await transaction.notification.createMany({
           data: authorities.map((authority) => ({
             institutionId: institution.id,
+            departmentId: currentDepartment.id,
             recipientId: authority.userId,
             recipientMembershipId: authority.id,
             type: 'MEMBERSHIP_REGISTRATION_PENDING',
@@ -326,13 +343,22 @@ function serializeRegistration(membership) {
   }
 }
 
-async function listPendingRegistrations(institutionId, role, database = getDatabase()) {
+async function listPendingRegistrations(
+  institutionId,
+  role,
+  database = getDatabase(),
+  scope = null,
+  departmentId,
+) {
+  if (departmentId) ensureAuthorityDepartmentInScope(scope, departmentId)
   const memberships = await database.institutionMembership.findMany({
     where: {
       institutionId,
       status: 'PENDING',
       deletedAt: null,
       role: role ? role : { in: ['STUDENT', 'TEACHER'] },
+      ...getDepartmentScopeWhere(scope, 'requestedDepartmentId'),
+      ...(departmentId ? { requestedDepartmentId: departmentId } : {}),
     },
     orderBy: { createdAt: 'asc' },
     select: registrationSelection(),
@@ -340,7 +366,12 @@ async function listPendingRegistrations(institutionId, role, database = getDatab
   return memberships.map(serializeRegistration)
 }
 
-async function getPendingRegistration(institutionId, membershipId, database = getDatabase()) {
+async function getPendingRegistration(
+  institutionId,
+  membershipId,
+  database = getDatabase(),
+  scope = null,
+) {
   const membership = await database.institutionMembership.findFirst({
     where: {
       id: membershipId,
@@ -362,7 +393,7 @@ async function decideRegistration(
   membershipId,
   reviewer,
   decision,
-  { database = getDatabase(), now = new Date() } = {},
+  { database = getDatabase(), now = new Date(), scope = null } = {},
 ) {
   const result = await database.$transaction(async (transaction) => {
     const membership = await transaction.institutionMembership.findFirst({
@@ -372,6 +403,7 @@ async function decideRegistration(
         status: 'PENDING',
         deletedAt: null,
         role: { in: ['STUDENT', 'TEACHER'] },
+        ...getDepartmentScopeWhere(scope, 'requestedDepartmentId'),
       },
       select: {
         id: true,
@@ -417,6 +449,7 @@ async function decideRegistration(
         institutionId,
         status: 'PENDING',
         deletedAt: null,
+        ...getDepartmentScopeWhere(scope, 'requestedDepartmentId'),
       },
       data: {
         status: decision === 'APPROVED' ? 'ACTIVE' : 'REJECTED',
@@ -444,6 +477,7 @@ async function decideRegistration(
     await transaction.notification.create({
       data: {
         institutionId,
+        departmentId: membership.requestedDepartmentId,
         recipientId: membership.userId,
         recipientMembershipId: membership.id,
         type: decision === 'APPROVED' ? 'MEMBERSHIP_REGISTRATION_APPROVED' : 'MEMBERSHIP_REGISTRATION_REJECTED',
@@ -460,6 +494,7 @@ async function decideRegistration(
     await transaction.auditLog.create({
       data: {
         institutionId,
+        departmentId: membership.requestedDepartmentId,
         actorId: reviewer.userId,
         actorMembershipId: reviewer.membershipId,
         action: `${membership.role}_REGISTRATION_${decision}`,

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import api from '../../lib/api.js'
 
@@ -21,6 +21,8 @@ function label(value) {
 
 function IssueListPage({ role }) {
   const { institutionId } = useParams()
+  const [searchParams] = useSearchParams()
+  const departmentId = role === 'AUTHORITY' ? searchParams.get('departmentId') || '' : ''
   const [filters, setFilters] = useState({
     category: '',
     priority: '',
@@ -34,11 +36,12 @@ function IssueListPage({ role }) {
     ? `/authority/institutions/${encodeURIComponent(institutionId)}/issues`
     : `/${role.toLowerCase()}/issues/${encodeURIComponent(institutionId)}`
   const issues = useQuery({
-    queryKey: ['issues', institutionId, role, filters],
+    queryKey: ['issues', institutionId, role, filters, departmentId],
     queryFn: async () => {
       const params = Object.fromEntries(
         Object.entries(filters).filter(([, value]) => value !== ''),
       )
+      if (departmentId) params.departmentId = departmentId
       return (await api.get(`/issues/${institutionId}`, { params })).data.data.issues
     },
     retry: false,
@@ -65,7 +68,7 @@ function IssueListPage({ role }) {
           </h1>
           <p className="mt-1 text-slate-600">
             {authority
-              ? 'Review and manage student and teacher issues in your institution.'
+              ? 'Review and manage student and teacher issues in your assigned departments.'
               : `View ${role.toLowerCase()}-audience issues in your institution.`}
           </p>
         </div>

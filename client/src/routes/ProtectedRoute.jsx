@@ -81,21 +81,13 @@ function ProtectedRoute({
     const institutionMatches =
       !institutionId || membership.institutionId === institutionId
     const roleMatches = !roles?.length || roles.includes(membership.role)
-    const activeDepartment =
-      membership.role === 'AUTHORITY'
-        ? !departmentId ||
-          membership.departmentMemberships?.some(
-            ({ department }) =>
-              department.id === departmentId &&
-              department.status === 'ACTIVE' &&
-              department.subscriptions?.length > 0,
-          )
-        : membership.departmentMemberships?.some(
-            ({ department }) =>
-              department.status === 'ACTIVE' &&
-              department.subscriptions?.length > 0 &&
-              (!departmentId || department.id === departmentId),
-          )
+    const activeDepartment = membership.role === 'AUTHORITY'
+      ? membership.authorityDepartments?.some(
+          ({ department }) => !departmentId || department.id === departmentId,
+        )
+      : membership.departmentMemberships?.some(
+          ({ department }) => !departmentId || department.id === departmentId,
+        )
 
     return (
       institutionMatches &&

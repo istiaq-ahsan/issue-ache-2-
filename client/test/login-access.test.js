@@ -39,7 +39,7 @@ test('Authority login returns only active, non-deleted Authority memberships', (
   ])
 })
 
-test('Student and Teacher candidates require an eligible active department', () => {
+test('Student and Teacher candidates require a department membership, not active department billing', () => {
   const student = createMembership('STUDENT', 'student')
   const teacher = createMembership('TEACHER', 'teacher')
   const expiredDepartment = createMembership('STUDENT', 'expired', {
@@ -47,12 +47,15 @@ test('Student and Teacher candidates require an eligible active department', () 
       { department: { status: 'EXPIRED', subscriptions: [] } },
     ],
   })
+  const noDepartment = createMembership('STUDENT', 'no-department', {
+    departmentMemberships: [],
+  })
 
   assert.deepEqual(
     getLoginCandidates('student', {
-      memberships: [student, teacher, expiredDepartment],
+      memberships: [student, teacher, expiredDepartment, noDepartment],
     }),
-    [student],
+    [student, expiredDepartment],
   )
   assert.deepEqual(
     getLoginCandidates('teacher', { memberships: [student, teacher] }),

@@ -6,6 +6,7 @@ const {
   requireRole,
 } = require('../middlewares/auth')
 const { createMemberRegistrationController } = require('../controllers/member-registration.controller')
+const { attachAuthorityScope } = require('../middlewares/authority-scope')
 const validateRequest = require('../validators/validate-request')
 const {
   registrationDecisionSchema,
@@ -17,10 +18,11 @@ function createAuthorityRegistrationRouter({
   authorizeInstitution = requireInstitutionAccess(),
   authorizeAuthority = requireRole('AUTHORITY'),
   requireSubscription = requireActiveSubscription,
+  attachScope = attachAuthorityScope(),
   controller = createMemberRegistrationController(),
 } = {}) {
   const router = express.Router()
-  const authorize = [authenticate, authorizeInstitution, authorizeAuthority]
+  const authorize = [authenticate, authorizeInstitution, authorizeAuthority, attachScope]
 
   router.get(
     '/institutions/:institutionId/pending-registrations',

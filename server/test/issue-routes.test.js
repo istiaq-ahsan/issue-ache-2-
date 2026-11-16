@@ -45,6 +45,10 @@ before(async () => {
       issueRouterOptions: {
         authenticate,
         authorizeInstitution,
+        attachScope: (req, res, next) => {
+          req.scope = { departmentIds: ['department-1'] }
+          next()
+        },
         requireSubscription: (req, res, next) => (
           subscriptionInactive
             ? next(new ApiError(402, 'SUBSCRIPTION_INACTIVE', 'Renew the institution subscription'))

@@ -1,26 +1,36 @@
-import { useParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import api from '../../lib/api.js'
 
 function NotificationsPage() {
   const { institutionId } = useParams()
+  const [searchParams] = useSearchParams()
+  const departmentId = searchParams.get('departmentId') || undefined
   const queryClient = useQueryClient()
-  const queryKey = ['notifications', institutionId]
+  const queryKey = ['notifications', institutionId, departmentId]
   const notifications = useQuery({
     queryKey,
     queryFn: async () => (await api.get(`/notifications/${institutionId}`, {
-      params: { limit: 100 },
+      params: { limit: 100, ...(departmentId ? { departmentId } : {}) },
     })).data.data,
     retry: false,
   })
   const markRead = useMutation({
-    mutationFn: async (id) => api.patch(`/notifications/${institutionId}/${id}/read`),
+    mutationFn: async (id) => api.patch(
+      `/notifications/${institutionId}/${id}/read`,
+      null,
+      { params: departmentId ? { departmentId } : undefined },
+    ),
     onSuccess: async () => queryClient.invalidateQueries({ queryKey }),
     onError: (error) => toast.error(error.response?.data?.error?.message || 'Could not update notification.'),
   })
   const markAllRead = useMutation({
-    mutationFn: async () => api.patch(`/notifications/${institutionId}/read-all`),
+    mutationFn: async () => api.patch(
+      `/notifications/${institutionId}/read-all`,
+      null,
+      { params: departmentId ? { departmentId } : undefined },
+    ),
     onSuccess: async () => {
       toast.success('All notifications marked as read')
       await queryClient.invalidateQueries({ queryKey })
@@ -33,7 +43,10 @@ function NotificationsPage() {
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="mt-3 text-3xl font-semibold text-slate-950">Notifications</h1>
-          <p className="mt-1 text-slate-600">{notifications.data?.unreadCount || 0} unread</p>
+          <p className="mt-1 text-slate-600">
+            {notifications.data?.unreadCount || 0} unread
+            {departmentId ? ' in the selected department' : ' across your departments'}
+          </p>
         </div>
         <div>
           <button

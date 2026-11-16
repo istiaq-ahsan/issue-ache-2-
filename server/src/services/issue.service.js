@@ -1,4 +1,8 @@
 const ApiError = require('../utils/api-error')
+const {
+  ensureAuthorityDepartmentInScope,
+  getDepartmentScopeWhere,
+} = require('../middlewares/authority-scope')
 
 function getDatabase() {
   return require('../config/prisma')
@@ -152,19 +156,26 @@ async function createIssue(
       },
     })
 
-    const authorities = await transaction.institutionMembership.findMany({
+    const assignments = await transaction.authorityDepartment.findMany({
       where: {
         institutionId,
-        role: 'AUTHORITY',
-        status: 'ACTIVE',
-        deletedAt: null,
+        departmentId: issue.departmentId,
+        authorityMembership: {
+          role: 'AUTHORITY',
+          status: 'ACTIVE',
+          deletedAt: null,
+        },
       },
-      select: { id: true, userId: true },
+      select: {
+        authorityMembership: { select: { id: true, userId: true } },
+      },
     })
+    const authorities = assignments.map(({ authorityMembership }) => authorityMembership)
     if (authorities.length > 0) {
       await transaction.notification.createMany({
         data: authorities.map((authority) => ({
           institutionId,
+          departmentId: issue.departmentId,
           recipientId: authority.userId,
           recipientMembershipId: authority.id,
           type: 'ISSUE_CREATED',
@@ -179,6 +190,7 @@ async function createIssue(
     await transaction.auditLog.create({
       data: {
         institutionId,
+        departmentId: issue.departmentId,
         actorId: userId,
         actorMembershipId: membership.id,
         action: 'ISSUE_CREATED',
@@ -202,11 +214,17 @@ async function listIssues(
   role,
   filters = {},
   database = getDatabase(),
+  scope = null,
 ) {
+  if (role === 'AUTHORITY' && filters.departmentId) {
+    ensureAuthorityDepartmentInScope(scope, filters.departmentId)
+  }
   const archived = filters.archived === 'true'
   const where = {
     institutionId,
     ...issueVisibilityWhere(role),
+    ...(role === 'AUTHORITY' ? getDepartmentScopeWhere(scope) : {}),
+    ...(filters.departmentId ? { departmentId: filters.departmentId } : {}),
     ...(filters.category ? { category: filters.category } : {}),
     ...(filters.priority ? { priority: filters.priority } : {}),
     ...(filters.status ? { status: filters.status } : {}),
@@ -237,12 +255,14 @@ async function getIssue(
   issueId,
   role,
   database = getDatabase(),
+  scope = null,
 ) {
   const issue = await database.issue.findFirst({
     where: {
       id: issueId,
       institutionId,
       ...issueVisibilityWhere(role),
+      ...(role === 'AUTHORITY' ? getDepartmentScopeWhere(scope) : {}),
     },
     select: issueSelect({
       details: true,
@@ -259,13 +279,18 @@ async function updateIssueStatus(
   issueId,
   actor,
   input,
-  { database = getDatabase(), now = new Date() } = {},
+  { database = getDatabase(), now = new Date(), scope = null } = {},
 ) {
   return database.$transaction(async (transaction) => {
     const issue = await transaction.issue.findFirst({
-      where: { id: issueId, institutionId },
+      where: {
+        id: issueId,
+        institutionId,
+        ...getDepartmentScopeWhere(scope),
+      },
       select: {
         id: true,
+        departmentId: true,
         status: true,
         archivedAt: true,
         reporterId: true,
@@ -305,6 +330,7 @@ async function updateIssueStatus(
       where: {
         id: issueId,
         institutionId,
+        ...getDepartmentScopeWhere(scope),
         status: issue.status,
         archivedAt: null,
       },
@@ -332,6 +358,7 @@ async function updateIssueStatus(
     await transaction.notification.create({
       data: {
         institutionId,
+        departmentId: issue.departmentId,
         recipientId: issue.reporterId,
         recipientMembershipId: issue.reporterMembershipId,
         type: 'ISSUE_STATUS_CHANGED',
@@ -345,6 +372,7 @@ async function updateIssueStatus(
     await transaction.auditLog.create({
       data: {
         institutionId,
+        departmentId: issue.departmentId,
         actorId: actor.userId,
         actorMembershipId: actor.membershipId,
         action: 'ISSUE_STATUS_CHANGED',
@@ -374,12 +402,12 @@ async function addIssueNote(
   issueId,
   actor,
   input,
-  { database = getDatabase() } = {},
+  { database = getDatabase(), scope = null } = {},
 ) {
   return database.$transaction(async (transaction) => {
     const issue = await transaction.issue.findFirst({
-      where: { id: issueId, institutionId },
-      select: { id: true, archivedAt: true },
+      where: { id: issueId, institutionId, ...getDepartmentScopeWhere(scope) },
+      select: { id: true, departmentId: true, archivedAt: true },
     })
     if (!issue) throw issueNotFound()
     if (issue.archivedAt) {
@@ -407,6 +435,7 @@ async function addIssueNote(
     await transaction.auditLog.create({
       data: {
         institutionId,
+        departmentId: issue.departmentId,
         actorId: actor.userId,
         actorMembershipId: actor.membershipId,
         action: 'ISSUE_NOTE_CREATED',
@@ -425,12 +454,12 @@ async function archiveIssue(
   issueId,
   actor,
   reason,
-  { database = getDatabase(), now = new Date() } = {},
+  { database = getDatabase(), now = new Date(), scope = null } = {},
 ) {
   return database.$transaction(async (transaction) => {
     const issue = await transaction.issue.findFirst({
-      where: { id: issueId, institutionId },
-      select: { id: true, status: true, archivedAt: true },
+      where: { id: issueId, institutionId, ...getDepartmentScopeWhere(scope) },
+      select: { id: true, departmentId: true, status: true, archivedAt: true },
     })
     if (!issue) throw issueNotFound()
     if (issue.archivedAt) {
@@ -447,6 +476,7 @@ async function archiveIssue(
       where: {
         id: issueId,
         institutionId,
+        ...getDepartmentScopeWhere(scope),
         status: issue.status,
         archivedAt: null,
       },
@@ -464,6 +494,7 @@ async function archiveIssue(
     await transaction.auditLog.create({
       data: {
         institutionId,
+        departmentId: issue.departmentId,
         actorId: actor.userId,
         actorMembershipId: actor.membershipId,
         action: 'ISSUE_ARCHIVED',

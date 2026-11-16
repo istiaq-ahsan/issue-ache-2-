@@ -1,15 +1,20 @@
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import api from '../../lib/api.js'
 
 function AuthorityPendingRegistrationsPage() {
   const { institutionId } = useParams()
+  const [searchParams] = useSearchParams()
+  const departmentId = searchParams.get('departmentId') || ''
   const [role, setRole] = useState('')
   const registrations = useQuery({
-    queryKey: ['pending-registrations', institutionId, role],
+    queryKey: ['pending-registrations', institutionId, role, departmentId],
     queryFn: async () => {
-      const params = role ? { role } : undefined
+      const params = {
+        ...(role ? { role } : {}),
+        ...(departmentId ? { departmentId } : {}),
+      }
       return (await api.get(
         `/authority/institutions/${institutionId}/pending-registrations`,
         { params },
@@ -24,7 +29,7 @@ function AuthorityPendingRegistrationsPage() {
         <div>
           <p className="text-sm font-semibold uppercase tracking-wide text-blue-700">Authority workspace</p>
           <h1 className="mt-2 text-3xl font-semibold text-slate-950">Pending registrations</h1>
-          <p className="mt-2 text-slate-600">Review student and teacher requests for your institution.</p>
+          <p className="mt-2 text-slate-600">Review student and teacher requests for your assigned departments.</p>
         </div>
         <label className="grid gap-2 text-sm font-medium text-slate-700">
           Filter by role

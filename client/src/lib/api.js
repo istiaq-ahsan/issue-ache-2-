@@ -1,6 +1,8 @@
 import axios from 'axios'
 import { signOut } from 'firebase/auth'
+import { toast } from 'sonner'
 import { firebaseAuth } from '../firebase/firebase.js'
+import queryClient from './query-client.js'
 
 const apiBaseUrl =
   import.meta.env.VITE_API_BASE_URL ||
@@ -43,6 +45,26 @@ export function setExpiredSessionHandler(handler) {
   expiredSessionHandler = handler
 }
 
+function findAdministeredInstitution(institutionId) {
+  if (!institutionId) return false
+  const profiles = queryClient.getQueriesData({ queryKey: ['auth', 'me'] })
+  return profiles.some(([, response]) => {
+    const profile = response?.data?.data || response?.data || response
+    return profile?.administeredInstitutions?.some(({ id }) => id === institutionId)
+  })
+}
+
+function getInstitutionIdFromRequest(config) {
+  const requestUrl = config?.url || ''
+  const match = requestUrl.match(/(?:^|\/)(?:institutions|notifications|audit-logs)\/([^/?#]+)/)
+  if (!match) return null
+  try {
+    return decodeURIComponent(match[1])
+  } catch {
+    return null
+  }
+}
+
 api.interceptors.request.use(async (config) => {
   const user = firebaseAuth?.currentUser
   if (user) {
@@ -76,6 +98,26 @@ api.interceptors.response.use(
         : error.message || 'The request could not be completed.')
     error.apiCode = apiError?.code
     error.apiStatus = status
+
+    if (apiError?.code === 'PLAN_LIMIT_REACHED') {
+      const limit = apiError.details?.limit
+      toast.error(
+        limit
+          ? `${apiError.message} (limit: ${limit}).`
+          : apiError.message || 'This plan limit has been reached.',
+      )
+    }
+
+    if (apiError?.code === 'SUBSCRIPTION_INACTIVE') {
+      const institutionId = getInstitutionIdFromRequest(error.config)
+      if (findAdministeredInstitution(institutionId)) {
+        toast.warning(apiError.message || 'Renew your institution subscription to continue.')
+        const billingPath = `/institution/subscriptions?institutionId=${encodeURIComponent(institutionId)}`
+        if (window.location.pathname + window.location.search !== billingPath) {
+          window.location.assign(billingPath)
+        }
+      }
+    }
 
     if (status === 401 && firebaseAuth?.currentUser) {
       await clearExpiredSession(error)
