@@ -55,6 +55,12 @@ function findAdministeredInstitution(institutionId) {
 }
 
 function getInstitutionIdFromRequest(config) {
+  const explicitInstitutionId =
+    config?.headers?.get?.('X-Institution-Id') ||
+    config?.headers?.['X-Institution-Id'] ||
+    config?.headers?.['x-institution-id']
+  if (explicitInstitutionId) return String(explicitInstitutionId)
+
   const requestUrl = config?.url || ''
   const match = requestUrl.match(/(?:^|\/)(?:institutions|notifications|audit-logs)\/([^/?#]+)/)
   if (!match) return null
@@ -101,11 +107,37 @@ api.interceptors.response.use(
 
     if (apiError?.code === 'PLAN_LIMIT_REACHED') {
       const limit = apiError.details?.limit
-      toast.error(
-        limit
-          ? `${apiError.message} (limit: ${limit}).`
-          : apiError.message || 'This plan limit has been reached.',
-      )
+      const current = apiError.details?.current
+      const departmentId = apiError.details?.departmentId
+      const institutionId = getInstitutionIdFromRequest(error.config)
+      const departments = institutionId
+        ? queryClient.getQueryData(['departments', institutionId]) || []
+        : []
+      const departmentName = departments.find(({ id }) => id === departmentId)?.name
+      const description = [
+        departmentId
+          ? `Department: ${departmentName || departmentId}`
+          : null,
+        Number.isInteger(current) && Number.isInteger(limit)
+          ? `${current}/${limit} enabled Authority slots are in use.`
+          : Number.isInteger(limit)
+            ? `Department limit: ${limit}.`
+            : null,
+      ].filter(Boolean).join(' ')
+      const billingPath = institutionId
+        ? `/institution/subscriptions?institutionId=${encodeURIComponent(institutionId)}`
+        : null
+      toast.error(apiError.message || 'This plan limit has been reached.', {
+        description: description || undefined,
+        ...(billingPath
+          ? {
+              action: {
+                label: 'Billing / upgrade',
+                onClick: () => window.location.assign(billingPath),
+              },
+            }
+          : {}),
+      })
     }
 
     if (apiError?.code === 'SUBSCRIPTION_INACTIVE') {

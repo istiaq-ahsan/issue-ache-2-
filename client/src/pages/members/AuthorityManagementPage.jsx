@@ -11,9 +11,11 @@ function getErrorMessage(error, fallback) {
 
 function AuthorityManagementPage({ institutionId }) {
   const queryClient = useQueryClient()
-  const [newAuthority, setNewAuthority] = useState({ name: '', email: '', password: '', departmentIds: [] })
+  const [newAuthority, setNewAuthority] = useState({ name: '', email: '', password: '', departmentId: '' })
   const [editingId, setEditingId] = useState(null)
-  const [editValues, setEditValues] = useState({ name: '', email: '', departmentIds: [] })
+  const [editValues, setEditValues] = useState({ name: '', email: '' })
+  const [changingDepartmentId, setChangingDepartmentId] = useState(null)
+  const [targetDepartmentId, setTargetDepartmentId] = useState('')
   const [formError, setFormError] = useState('')
 
   const authorities = useQuery({
@@ -29,16 +31,20 @@ function AuthorityManagementPage({ institutionId }) {
   })
 
   async function refreshAuthorities() {
-    await queryClient.invalidateQueries({ queryKey: ['authorities', institutionId] })
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['authorities', institutionId] }),
+      queryClient.invalidateQueries({ queryKey: ['departments', institutionId] }),
+      queryClient.invalidateQueries({ queryKey: ['institution-dashboard', institutionId] }),
+    ])
   }
 
   const createAuthority = useMutation({
     mutationFn: async (account) => {
-      if (account.departmentIds.length === 0) throw new Error('Assign the Authority to at least one department.')
+      if (!account.departmentId) throw new Error('Assign the Authority to one department.')
       return (await api.post(`/institutions/${institutionId}/authorities`, account)).data.data.authority
     },
     onSuccess: async () => {
-      setNewAuthority({ name: '', email: '', password: '', departmentIds: [] })
+      setNewAuthority({ name: '', email: '', password: '', departmentId: '' })
       setFormError('')
       toast.success('Authority account created with department access.')
       await refreshAuthorities()
@@ -47,16 +53,11 @@ function AuthorityManagementPage({ institutionId }) {
   })
 
   const updateAuthority = useMutation({
-    mutationFn: async ({ id, values }) => {
-      if (values.departmentIds.length === 0) throw new Error('An Authority must have at least one department.')
-      await api.put(`/authorities/${encodeURIComponent(id)}/departments`, {
-        departmentIds: values.departmentIds,
-      })
-      return (await api.patch(`/institutions/${institutionId}/authorities/${id}`, {
+    mutationFn: async ({ id, values }) =>
+      (await api.patch(`/institutions/${institutionId}/authorities/${id}`, {
         name: values.name,
         email: values.email,
-      })).data.data.authority
-    },
+      })).data.data.authority,
     onSuccess: async () => {
       setEditingId(null)
       toast.success('Authority account updated')
@@ -64,6 +65,25 @@ function AuthorityManagementPage({ institutionId }) {
     },
     onError: async (error) => {
       toast.error(getErrorMessage(error, 'Could not update the Authority account.'))
+      await refreshAuthorities()
+    },
+  })
+
+  const changeDepartment = useMutation({
+    mutationFn: async ({ id, departmentId }) =>
+      (await api.put(`/authorities/${encodeURIComponent(id)}/department`, {
+        departmentId,
+      }, {
+        headers: { 'X-Institution-Id': institutionId },
+      })).data.data.department,
+    onSuccess: async () => {
+      setChangingDepartmentId(null)
+      setTargetDepartmentId('')
+      toast.success('Authority department changed')
+      await refreshAuthorities()
+    },
+    onError: async (error) => {
+      toast.error(getErrorMessage(error, 'Could not change the Authority department.'))
       await refreshAuthorities()
     },
   })
@@ -102,12 +122,12 @@ function AuthorityManagementPage({ institutionId }) {
     setEditValues({
       name: authority.user.name,
       email: authority.user.email,
-      departmentIds: authority.departments.map(({ id }) => id),
     })
   }
 
-  function selectedDepartmentIds(event) {
-    return Array.from(event.target.selectedOptions, (option) => option.value)
+  function beginChangeDepartment(authority) {
+    setChangingDepartmentId(authority.id)
+    setTargetDepartmentId(authority.departments[0]?.id || '')
   }
 
   function submitEdit(event, id) {
@@ -139,7 +159,7 @@ function AuthorityManagementPage({ institutionId }) {
         </p>
         <h1 className="mt-2 text-3xl font-semibold text-slate-950">Authority accounts</h1>
         <p className="mt-2 max-w-2xl text-slate-600">
-          Create institution Authorities and assign one or more departments. Initial passwords are not stored; deliver them securely.
+          Create institution Authorities and assign exactly one department. Initial passwords are not stored; deliver them securely.
         </p>
       </header>
 
@@ -160,20 +180,28 @@ function AuthorityManagementPage({ institutionId }) {
           />
         </label>
         <label className="grid gap-2 text-sm font-medium text-slate-700 sm:col-span-2">
-          Departments
+          Department
           <select
-            aria-describedby="new-authority-departments-help"
-            className="min-h-28 rounded-lg border border-slate-300 bg-white px-3 py-2"
+            aria-describedby="new-authority-department-help"
+            className="min-h-11 rounded-lg border border-slate-300 bg-white px-3"
             disabled={departments.isLoading || departments.isError}
-            multiple
-            onChange={(event) => setNewAuthority({ ...newAuthority, departmentIds: selectedDepartmentIds(event) })}
+            onChange={(event) => setNewAuthority({ ...newAuthority, departmentId: event.target.value })}
             required
-            value={newAuthority.departmentIds}
+            value={newAuthority.departmentId}
           >
-            {(departments.data || []).map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
+            <option value="">Select a department</option>
+            {(departments.data || []).map((department) => {
+              const { used = 0, limit } = department.authorityUsage || {}
+              const full = Number.isInteger(limit) && used >= limit
+              return (
+                <option disabled={full} key={department.id} value={department.id}>
+                  {department.name} ({used}/{limit ?? '∞'}){full ? ' · Full' : ''}
+                </option>
+              )
+            })}
           </select>
-          <span className="text-xs font-normal text-slate-500" id="new-authority-departments-help">
-            Select at least one department. Use Ctrl or Command to select multiple.
+          <span className="text-xs font-normal text-slate-500" id="new-authority-department-help">
+            Each Authority belongs to exactly one department. Full departments cannot accept another enabled Authority.
           </span>
           {departments.isError && <span className="text-sm text-red-700" role="alert">Could not load departments for assignment.</span>}
         </label>
@@ -204,7 +232,9 @@ function AuthorityManagementPage({ institutionId }) {
         {formError && <p className="text-sm text-red-700 sm:col-span-2" role="alert">{formError}</p>}
         <button
           className="min-h-11 justify-self-start rounded-lg bg-blue-700 px-5 font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
-          disabled={createAuthority.isPending || departments.isLoading || departments.isError || departments.data?.length === 0}
+          disabled={createAuthority.isPending || departments.isLoading || departments.isError || !(departments.data || []).some(({ authorityUsage }) =>
+            !Number.isInteger(authorityUsage?.limit) || authorityUsage.used < authorityUsage.limit,
+          )}
           type="submit"
         >
           {createAuthority.isPending ? 'Creating account…' : 'Create Authority'}
@@ -255,20 +285,6 @@ function AuthorityManagementPage({ institutionId }) {
                           value={editValues.email}
                         />
                       </label>
-                      <label className="grid gap-2 text-sm font-medium text-slate-700 sm:col-span-2">
-                        Departments
-                        <select
-                          className="min-h-28 rounded-lg border border-slate-300 bg-white px-3 py-2"
-                          disabled={departments.isLoading || departments.isError}
-                          multiple
-                          onChange={(event) => setEditValues({ ...editValues, departmentIds: selectedDepartmentIds(event) })}
-                          required
-                          value={editValues.departmentIds}
-                        >
-                          {(departments.data || []).map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
-                        </select>
-                        <span className="text-xs font-normal text-slate-500">An Authority must remain assigned to at least one department.</span>
-                      </label>
                       <div className="flex gap-3 sm:col-span-2">
                         <button className="rounded-lg bg-blue-700 px-4 py-2 font-semibold text-white disabled:opacity-60" disabled={updateAuthority.isPending || departments.isLoading || departments.isError} type="submit">
                           {updateAuthority.isPending ? 'Saving…' : 'Save changes'}
@@ -284,11 +300,9 @@ function AuthorityManagementPage({ institutionId }) {
                         <div>
                           <h3 className="font-semibold text-slate-950">{authority.user.name}</h3>
                           <p className="mt-1 text-sm text-slate-600">{authority.user.email}</p>
-                          <div aria-label={`Departments assigned to ${authority.user.name}`} className="mt-3 flex flex-wrap gap-1.5">
-                            {authority.departments.map((department) => (
-                              <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-800" key={department.id}>{department.name}</span>
-                            ))}
-                          </div>
+                          <span className="mt-3 inline-flex rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-800">
+                            {authority.departments[0]?.name || 'No department assigned'}
+                          </span>
                           <span className={`mt-3 inline-block rounded-full px-3 py-1 text-xs font-semibold ${
                             isDeleted
                               ? 'bg-slate-100 text-slate-700'
@@ -307,6 +321,13 @@ function AuthorityManagementPage({ institutionId }) {
                               type="button"
                             >
                               Edit
+                            </button>
+                            <button
+                              className="min-h-10 rounded-lg border border-slate-300 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                              onClick={() => beginChangeDepartment(authority)}
+                              type="button"
+                            >
+                              Change department
                             </button>
                             <button
                               className="min-h-10 rounded-lg border border-slate-300 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
@@ -332,6 +353,51 @@ function AuthorityManagementPage({ institutionId }) {
                           </div>
                         )}
                       </div>
+                      {changingDepartmentId === authority.id && (
+                        <form
+                          className="mt-4 flex flex-wrap items-end gap-3 border-t border-slate-100 pt-4"
+                          onSubmit={(event) => {
+                            event.preventDefault()
+                            changeDepartment.mutate({ id: authority.id, departmentId: targetDepartmentId })
+                          }}
+                        >
+                          <label className="grid min-w-64 flex-1 gap-2 text-sm font-medium text-slate-700">
+                            New department
+                            <select
+                              className="min-h-11 rounded-lg border border-slate-300 bg-white px-3"
+                              onChange={(event) => setTargetDepartmentId(event.target.value)}
+                              required
+                              value={targetDepartmentId}
+                            >
+                              {(departments.data || []).map((department) => {
+                                const { used = 0, limit } = department.authorityUsage || {}
+                                const isCurrent = department.id === authority.departments[0]?.id
+                                const full = Number.isInteger(limit) && used >= limit
+                                const blocked = authority.status === 'ACTIVE' && full && !isCurrent
+                                return (
+                                  <option disabled={blocked} key={department.id} value={department.id}>
+                                    {department.name} ({used}/{limit ?? '∞'}){full ? ' · Full' : ''}
+                                  </option>
+                                )
+                              })}
+                            </select>
+                          </label>
+                          <button
+                            className="min-h-11 rounded-lg bg-blue-700 px-4 font-semibold text-white disabled:opacity-60"
+                            disabled={changeDepartment.isPending || !targetDepartmentId}
+                            type="submit"
+                          >
+                            {changeDepartment.isPending ? 'Saving…' : 'Save department'}
+                          </button>
+                          <button
+                            className="min-h-11 rounded-lg border border-slate-300 px-4 font-semibold text-slate-700"
+                            onClick={() => setChangingDepartmentId(null)}
+                            type="button"
+                          >
+                            Cancel
+                          </button>
+                        </form>
+                      )}
                     </>
                   )}
                 </li>

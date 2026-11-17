@@ -1,11 +1,12 @@
 const { getFirebaseAuth } = require('../config/firebase-admin')
 const ApiError = require('../utils/api-error')
 const { notifyInstitutionAdministrator } = require('../utils/institution-notification')
-const { assertPlanLimit, ensureActiveSubscription } = require('./subscription.service')
+const { writeAuditLog } = require('./audit-log.service')
 const {
-  assertDepartmentsBelongToInstitution,
-  replaceAuthorityDepartments,
+  assertDepartmentBelongsToInstitution,
+  changeAuthorityDepartment,
 } = require('./authority-department.service')
+const { assertDepartmentAuthoritySlot } = require('./authority-limit.service')
 
 function getDatabase() {
   return require('../config/prisma')
@@ -96,16 +97,12 @@ function createAuthority(
 }
 
 async function createAuthorityAccount(input, institutionId, actorId, database, firebaseAuth, logger) {
-  const subscription = await ensureActiveSubscription(institutionId, { database })
-  const authorityCount = await database.institutionMembership.count({
-    where: { institutionId, role: 'AUTHORITY', deletedAt: null },
-  })
-  assertPlanLimit(subscription, 'maxAuthorities', authorityCount)
-  const departmentIds = await assertDepartmentsBelongToInstitution(
+  const departmentId = await assertDepartmentBelongsToInstitution(
     institutionId,
-    input.departmentIds,
+    input.departmentId,
     database,
   )
+  await assertDepartmentAuthoritySlot(database, institutionId, departmentId)
 
   const email = normalizeEmail(input.email)
   const existingUser = await database.user.findUnique({
@@ -132,20 +129,9 @@ async function createAuthorityAccount(input, institutionId, actorId, database, f
 
   try {
     const membership = await database.$transaction(async (transaction) => {
-      await transaction.$queryRaw`
-        WITH advisory_lock AS MATERIALIZED (
-          SELECT pg_advisory_xact_lock(hashtext(${`authority-limit:${institutionId}`}))
-        )
-        SELECT TRUE
-        FROM advisory_lock
-      `
-      const currentSubscription = await ensureActiveSubscription(institutionId, {
-        database: transaction,
+      await assertDepartmentAuthoritySlot(transaction, institutionId, departmentId, {
+        lockDepartment: true,
       })
-      const currentAuthorityCount = await transaction.institutionMembership.count({
-        where: { institutionId, role: 'AUTHORITY', deletedAt: null },
-      })
-      assertPlanLimit(currentSubscription, 'maxAuthorities', currentAuthorityCount)
 
       const user = await transaction.user.create({
         data: {
@@ -166,13 +152,13 @@ async function createAuthorityAccount(input, institutionId, actorId, database, f
         select: getAuthoritySelection(),
       })
 
-      await transaction.authorityDepartment.createMany({
-        data: departmentIds.map((departmentId) => ({
+      await transaction.authorityDepartment.create({
+        data: {
           institutionId,
           authorityMembershipId: createdMembership.id,
           departmentId,
           assignedById: actorId,
-        })),
+        },
       })
 
       const assignedMembership = await transaction.institutionMembership.findUnique({
@@ -180,7 +166,7 @@ async function createAuthorityAccount(input, institutionId, actorId, database, f
         select: getAuthoritySelection(),
       })
 
-      await transaction.auditLog.create({
+      await writeAuditLog(transaction, {
         data: {
           institutionId,
           actorId,
@@ -190,19 +176,17 @@ async function createAuthorityAccount(input, institutionId, actorId, database, f
           metadata: { email },
         },
       })
-      for (const departmentId of departmentIds) {
-        await transaction.auditLog.create({
-          data: {
-            institutionId,
-            departmentId,
-            actorId,
-            action: 'AUTHORITY_DEPARTMENT_ASSIGNED',
-            entityType: 'InstitutionMembership',
-            entityId: createdMembership.id,
-            metadata: { departmentId },
-          },
-        })
-      }
+      await writeAuditLog(transaction, {
+        data: {
+          institutionId,
+          departmentId,
+          actorId,
+          action: 'AUTHORITY_DEPARTMENT_ASSIGNED',
+          entityType: 'InstitutionMembership',
+          entityId: createdMembership.id,
+          metadata: { departmentId },
+        },
+      })
       await notifyInstitutionAdministrator(transaction, {
         institutionId,
         type: 'AUTHORITY_CREATED',
@@ -326,7 +310,7 @@ async function updateAuthority(
         select: getAuthoritySelection(),
       })
 
-      await transaction.auditLog.create({
+      await writeAuditLog(transaction, {
         data: {
           institutionId,
           actorId,
@@ -394,15 +378,35 @@ async function setAuthorityEnabled(
       'Assign the Authority to at least one department before enabling the account',
     )
   }
+  if (enabled && current.authorityDepartments?.length !== 1) {
+    throw new ApiError(
+      409,
+      'AUTHORITY_ASSIGNMENTS_NOT_NORMALIZED',
+      'This Authority has legacy department assignments that must be normalized before enabling the account',
+    )
+  }
 
   const status = enabled ? 'ACTIVE' : 'INACTIVE'
   if (current.status !== status) {
     await database.$transaction(async (transaction) => {
+      if (enabled) {
+        const departmentIds = current.authorityDepartments
+          .map(({ department }) => department.id)
+          .sort()
+        for (const departmentId of departmentIds) {
+          await assertDepartmentAuthoritySlot(
+            transaction,
+            institutionId,
+            departmentId,
+            { lockDepartment: true },
+          )
+        }
+      }
       await transaction.institutionMembership.update({
         where: { id: membershipId },
         data: { status },
       })
-      await transaction.auditLog.create({
+      await writeAuditLog(transaction, {
         data: {
           institutionId,
           actorId,
@@ -460,7 +464,10 @@ async function deleteAuthority(
       where: { id: membershipId },
       data: { status: 'INACTIVE', deletedAt: now },
     })
-    await transaction.auditLog.create({
+    await transaction.authorityDepartment.deleteMany({
+      where: { institutionId, authorityMembershipId: membershipId },
+    })
+    await writeAuditLog(transaction, {
       data: {
         institutionId,
         actorId,
@@ -537,7 +544,7 @@ module.exports = {
   createAuthority,
   deleteAuthority,
   listAuthorities,
-  replaceAuthorityDepartments,
+  changeAuthorityDepartment,
   setAuthorityEnabled,
   updateAuthority,
 }

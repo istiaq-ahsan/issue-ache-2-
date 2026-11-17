@@ -1,4 +1,5 @@
 const ApiError = require('../utils/api-error')
+const { writeAuditLog } = require('./audit-log.service')
 const {
   ensureAuthorityDepartmentInScope,
   getDepartmentScopeWhere,
@@ -187,7 +188,7 @@ async function createIssue(
       })
     }
 
-    await transaction.auditLog.create({
+    await writeAuditLog(transaction, {
       data: {
         institutionId,
         departmentId: issue.departmentId,
@@ -369,7 +370,7 @@ async function updateIssueStatus(
       },
     })
 
-    await transaction.auditLog.create({
+    await writeAuditLog(transaction, {
       data: {
         institutionId,
         departmentId: issue.departmentId,
@@ -432,7 +433,7 @@ async function addIssueNote(
       },
     })
 
-    await transaction.auditLog.create({
+    await writeAuditLog(transaction, {
       data: {
         institutionId,
         departmentId: issue.departmentId,
@@ -491,7 +492,7 @@ async function archiveIssue(
       throw issueConflict('ISSUE_CHANGED', 'The issue was updated by another user; reload and try again')
     }
 
-    await transaction.auditLog.create({
+    await writeAuditLog(transaction, {
       data: {
         institutionId,
         departmentId: issue.departmentId,

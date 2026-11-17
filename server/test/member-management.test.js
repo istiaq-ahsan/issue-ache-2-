@@ -81,6 +81,12 @@ test('Authority activation is department-scoped and audits each visible departme
   }
   const database = {
     $transaction: async (callback) => callback({
+      department: {
+        findFirst: async ({ where }) => ({
+          id: where.id,
+          name: 'Science',
+        }),
+      },
       institutionMembership: {
         findFirst: async ({ where }) => {
           writes.push({ table: 'find', where })

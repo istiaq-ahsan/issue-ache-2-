@@ -8,7 +8,7 @@ const { createAuthorityController } = require('../controllers/authority.controll
 const asyncHandler = require('../utils/async-handler')
 const ApiError = require('../utils/api-error')
 const validateRequest = require('../validators/validate-request')
-const { authorityDepartmentsSchema } = require('../validators/authority-department.validators')
+const { authorityDepartmentSchema } = require('../validators/authority-department.validators')
 
 function createAuthorityDepartmentRouter({
   authenticate = requireAuth,
@@ -36,13 +36,13 @@ function createAuthorityDepartmentRouter({
   })
 
   router.put(
-    '/:membershipId/departments',
+    '/:membershipId/department',
     authenticate,
     resolveInstitution,
     authorizeAdministrator,
     requireSubscription,
-    validateRequest({ body: authorityDepartmentsSchema }),
-    controller.replaceDepartments,
+    validateRequest({ body: authorityDepartmentSchema }),
+    controller.changeDepartment,
   )
 
   return router

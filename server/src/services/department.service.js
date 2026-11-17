@@ -1,4 +1,7 @@
 const ApiError = require('../utils/api-error')
+const { writeAuditLog } = require('./audit-log.service')
+const { getPlan } = require('../config/plans')
+const { getCurrentSubscription } = require('./subscription.service')
 
 function getDatabase() {
   return require('../config/prisma')
@@ -24,30 +27,64 @@ async function createDepartment(institutionId, name, actorId, database = getData
       data: { institutionId, name },
       select: departmentSelection(),
     })
-    await transaction.auditLog.create({
+    await writeAuditLog(transaction, {
       data: {
         institutionId,
+        departmentId: department.id,
         actorId,
         action: 'DEPARTMENT_CREATED',
         entityType: 'Department',
         entityId: department.id,
-        metadata: { name: department.name },
+        metadata: { name: department.name, departmentName: department.name },
       },
     })
     return department
   })
 }
 
+async function getAuthorityCapacity(database, institutionId) {
+  const subscription = await getCurrentSubscription(institutionId, { database })
+  const plan = getPlan(subscription?.planCode)
+  return {
+    limit: plan?.limits?.maxAuthoritiesPerDepartment ?? null,
+    planCode: subscription?.planCode || null,
+  }
+}
+
 async function listDepartments(institutionId, database = getDatabase()) {
-  return database.department.findMany({
-    where: { institutionId },
-    orderBy: { name: 'asc' },
-    select: departmentSelection(),
-  })
+  const [departments, authorityCapacity] = await Promise.all([
+    database.department.findMany({
+      where: { institutionId },
+      orderBy: { name: 'asc' },
+      select: {
+        ...departmentSelection(),
+        authorityAssignments: {
+          where: {
+            authorityMembership: { role: 'AUTHORITY' },
+          },
+          select: {
+            authorityMembership: {
+              select: { status: true, deletedAt: true },
+            },
+          },
+        },
+      },
+    }),
+    getAuthorityCapacity(database, institutionId),
+  ])
+  return departments.map(({ authorityAssignments, ...department }) => ({
+    ...department,
+    authorityUsage: {
+      used: authorityAssignments.filter(({ authorityMembership }) =>
+        authorityMembership.status === 'ACTIVE' && !authorityMembership.deletedAt,
+      ).length,
+      ...authorityCapacity,
+    },
+  }))
 }
 
 async function getDepartmentDetails(institutionId, departmentId, database = getDatabase()) {
-  const [department, students, teachers, issues] = await Promise.all([
+  const [department, students, teachers, issues, authorityCapacity] = await Promise.all([
     database.department.findFirst({
       where: { id: departmentId, institutionId },
       select: {
@@ -58,6 +95,7 @@ async function getDepartmentDetails(institutionId, departmentId, database = getD
             authorityMembership: {
               select: {
                 id: true,
+                role: true,
                 status: true,
                 deletedAt: true,
                 user: { select: { name: true, email: true } },
@@ -108,6 +146,7 @@ async function getDepartmentDetails(institutionId, departmentId, database = getD
       },
     }),
     database.issue.count({ where: { institutionId, departmentId } }),
+    getAuthorityCapacity(database, institutionId),
   ])
   if (!department) throw departmentNotFound()
 
@@ -117,10 +156,18 @@ async function getDepartmentDetails(institutionId, departmentId, database = getD
     payments,
     ...departmentDetails
   } = department
+  const used = authorityAssignments.filter(
+    ({ authorityMembership }) =>
+      authorityMembership.role === 'AUTHORITY' &&
+      !authorityMembership.deletedAt &&
+      authorityMembership.status === 'ACTIVE',
+  ).length
   return {
     ...departmentDetails,
     authorityAssignments: authorityAssignments
-      .filter(({ authorityMembership }) => !authorityMembership.deletedAt)
+      .filter(({ authorityMembership }) =>
+        authorityMembership.role === 'AUTHORITY' && !authorityMembership.deletedAt,
+      )
       .map(({ authorityMembership }) => ({
         id: authorityMembership.id,
         status: authorityMembership.status,
@@ -130,10 +177,9 @@ async function getDepartmentDetails(institutionId, departmentId, database = getD
       students,
       teachers,
       issues,
-      authorities: authorityAssignments.filter(
-        ({ authorityMembership }) => !authorityMembership.deletedAt,
-      ).length,
+      authorities: used,
     },
+    authorityUsage: { used, ...authorityCapacity },
     legacyBillingHistory: { subscriptions, payments },
   }
 }
@@ -157,14 +203,19 @@ async function updateDepartment(
       data: { name },
       select: departmentSelection(),
     })
-    await transaction.auditLog.create({
+    await writeAuditLog(transaction, {
       data: {
         institutionId,
+        departmentId,
         actorId,
         action: 'DEPARTMENT_UPDATED',
         entityType: 'Department',
         entityId: departmentId,
-        metadata: { previousName: existing.name, name: department.name },
+        metadata: {
+          previousName: existing.name,
+          name: department.name,
+          departmentName: department.name,
+        },
       },
     })
     return department
@@ -180,11 +231,16 @@ async function getDepartmentReferences(transaction, institutionId, departmentId)
     requestedRegistrations,
     legacySubscriptions,
     legacyPayments,
-    auditLogs,
   ] = await Promise.all([
     transaction.departmentMembership.count({ where: { institutionId, departmentId } }),
     transaction.issue.count({ where: { institutionId, departmentId } }),
-    transaction.authorityDepartment.count({ where: { institutionId, departmentId } }),
+    transaction.authorityDepartment.count({
+      where: {
+        institutionId,
+        departmentId,
+        authorityMembership: { deletedAt: null },
+      },
+    }),
     transaction.departmentChangeRequest.count({
       where: {
         institutionId,
@@ -200,7 +256,6 @@ async function getDepartmentReferences(transaction, institutionId, departmentId)
     }),
     transaction.subscription.count({ where: { institutionId, departmentId } }),
     transaction.payment.count({ where: { institutionId, departmentId } }),
-    transaction.auditLog.count({ where: { institutionId, departmentId } }),
   ])
   return {
     departmentMemberships,
@@ -210,7 +265,6 @@ async function getDepartmentReferences(transaction, institutionId, departmentId)
     requestedRegistrations,
     legacySubscriptions,
     legacyPayments,
-    auditLogs,
   }
 }
 
@@ -241,17 +295,25 @@ async function deleteDepartment(
         )
       }
 
-      await transaction.department.delete({ where: { id: departmentId } })
-      await transaction.auditLog.create({
+      await transaction.authorityDepartment.deleteMany({
+        where: {
+          institutionId,
+          departmentId,
+          authorityMembership: { deletedAt: { not: null } },
+        },
+      })
+      await writeAuditLog(transaction, {
         data: {
           institutionId,
+          departmentId,
           actorId,
           action: 'DEPARTMENT_DELETED',
           entityType: 'Department',
           entityId: departmentId,
-          metadata: { name: department.name },
+          metadata: { name: department.name, departmentName: department.name },
         },
       })
+      await transaction.department.delete({ where: { id: departmentId } })
       return { id: departmentId, deleted: true }
     })
   } catch (error) {

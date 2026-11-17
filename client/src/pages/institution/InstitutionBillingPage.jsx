@@ -35,6 +35,12 @@ function InstitutionBillingPage({ section = 'subscriptions' }) {
     enabled: Boolean(institutionId),
     retry: false,
   })
+  const departmentsQuery = useQuery({
+    queryKey: ['departments', institutionId],
+    queryFn: async () => (await api.get(`/institutions/${encodeURIComponent(institutionId)}/departments`)).data.data.departments,
+    enabled: Boolean(institutionId),
+    retry: false,
+  })
   const plans = useQuery({
     queryKey: ['plans'],
     queryFn: async () => (await api.get('/plans')).data.data.plans,
@@ -58,22 +64,52 @@ function InstitutionBillingPage({ section = 'subscriptions' }) {
       }
       window.location.assign(redirectUrl)
     },
-    onError: (error) => toast.error(error.apiMessage || 'Could not start subscription checkout.'),
+    onError: (error) => {
+      if (error.apiCode === 'PLAN_DOWNGRADE_BLOCKED') {
+        const departments = error.response?.data?.error?.details?.departments || []
+        toast.error(error.apiMessage, {
+          description: departments.map(({ name, enabledAuthorities, limit }) =>
+            `${name} (${enabledAuthorities}/${limit})`,
+          ).join(', '),
+        })
+        return
+      }
+      toast.error(error.apiMessage || 'Could not start subscription checkout.')
+    },
   })
 
   if (!institutionId) {
     return <p className="p-8">Select an institution to manage billing.</p>
   }
-  if (billing.isLoading || dashboard.isLoading || plans.isLoading) {
+  if (
+    billing.isLoading ||
+    dashboard.isLoading ||
+    departmentsQuery.isLoading ||
+    plans.isLoading
+  ) {
     return <LoadingState label="Loading institution billing…" />
   }
-  if (billing.isError || dashboard.isError || plans.isError) {
-    const error = billing.error || dashboard.error || plans.error
+  if (
+    billing.isError ||
+    dashboard.isError ||
+    departmentsQuery.isError ||
+    plans.isError
+  ) {
+    const error =
+      billing.error ||
+      dashboard.error ||
+      departmentsQuery.error ||
+      plans.error
     return (
       <main className="mx-auto max-w-3xl px-5 py-12">
         <ErrorState
           message={error.apiMessage || 'Could not load billing details.'}
-          onRetry={() => Promise.all([billing.refetch(), dashboard.refetch(), plans.refetch()])}
+          onRetry={() => Promise.all([
+            billing.refetch(),
+            dashboard.refetch(),
+            departmentsQuery.refetch(),
+            plans.refetch(),
+          ])}
         />
       </main>
     )
@@ -81,11 +117,23 @@ function InstitutionBillingPage({ section = 'subscriptions' }) {
 
   const members = dashboard.data.memberships || []
   const usage = {
-    authorities: members.filter((entry) => entry.role === 'AUTHORITY').reduce((sum, entry) => sum + entry.count, 0),
     members: members.filter((entry) => ['STUDENT', 'TEACHER'].includes(entry.role)).reduce((sum, entry) => sum + entry.count, 0),
   }
   const currentPlan = plans.data.find(({ code }) => code === subscription?.planCode)
   const selectedPlan = plans.data.find(({ code }) => code === (planCode || subscription?.planCode)) || plans.data[0]
+  const authorityLimit = currentPlan?.limits.maxAuthoritiesPerDepartment
+  const departmentUsage = departmentsQuery.data.map((department) => {
+    const used = department.authorityUsage?.used || 0
+    const limit = department.authorityUsage?.limit ?? authorityLimit
+    return {
+    ...department,
+    used,
+    limit,
+    atLimit: Number.isInteger(limit) && used >= limit,
+    overLimit: Number.isInteger(limit) && used > limit,
+    }
+  })
+  const departmentsAtLimit = departmentUsage.filter(({ atLimit }) => atLimit)
   const paymentRows = billing.data.payments || []
   const subscriptionRows = billing.data.subscriptions || []
   const institutionPath = `/institution/dashboard/${encodeURIComponent(institutionId)}`
@@ -135,7 +183,6 @@ function InstitutionBillingPage({ section = 'subscriptions' }) {
           <h2 className="text-lg font-semibold text-slate-950">Plan usage</h2>
           <p className="mt-1 text-sm text-slate-600">Current institution usage against this plan’s limits.</p>
           {[
-            { label: 'Authorities', value: usage.authorities, limit: currentPlan?.limits.maxAuthorities },
             { label: 'Students and teachers', value: usage.members, limit: currentPlan?.limits.maxMembers },
           ].map(({ label, limit, value }) => (
             <div className="mt-5" key={label}>
@@ -148,7 +195,35 @@ function InstitutionBillingPage({ section = 'subscriptions' }) {
               </div>
             </div>
           ))}
-          <p className="mt-4 text-xs text-slate-500">Departments are unlimited on every plan.</p>
+          <div className="mt-5 border-t border-slate-100 pt-4">
+            <p className="text-sm font-medium text-slate-700">Authority usage by department</p>
+            {departmentUsage.length === 0 ? (
+              <p className="mt-2 text-sm text-slate-500">No departments yet. Departments are unlimited on every plan.</p>
+            ) : (
+              <>
+                <ul className="mt-2 grid gap-2">
+                  {departmentUsage.map(({ id, name, used, limit, atLimit, overLimit }) => (
+                    <li className="flex items-center justify-between gap-3 text-sm" key={id}>
+                      <span className="text-slate-700">{name}</span>
+                      <span className={`font-semibold ${atLimit ? 'text-amber-800' : 'text-slate-900'}`}>
+                        {used}/{limit ?? '∞'}{overLimit ? ' · Over limit' : atLimit ? ' · At limit' : ''}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                {departmentsAtLimit.length > 0 && (
+                  <p className="mt-3 text-xs text-amber-800">
+                    {departmentsAtLimit.length} department{departmentsAtLimit.length === 1 ? '' : 's'} at the current plan limit.
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+          <p className="mt-4 text-xs text-slate-500">
+            {currentPlan?.limits.maxDepartments === null
+              ? 'Departments are unlimited on this plan.'
+              : `Department limit: ${currentPlan?.limits.maxDepartments ?? '—'}.`}
+          </p>
         </article>
       </section>
 
@@ -164,7 +239,13 @@ function InstitutionBillingPage({ section = 'subscriptions' }) {
           <label className="grid gap-1.5 text-sm font-medium text-slate-700">
             Plan
             <select className="min-h-11 rounded-lg border border-slate-300 bg-white px-3" onChange={(event) => setPlanCode(event.target.value)} value={planCode || subscription?.planCode || plans.data[0]?.code}>
-              {plans.data.map((plan) => <option key={plan.code} value={plan.code}>{plan.name} · max {plan.limits.maxAuthorities} Authorities</option>)}
+              {plans.data.map((plan) => (
+                <option key={plan.code} value={plan.code}>
+                  {plan.name} · {plan.limits.maxAuthoritiesPerDepartment === 1
+                    ? '1 authority per department'
+                    : `up to ${plan.limits.maxAuthoritiesPerDepartment} authorities per department`}
+                </option>
+              ))}
             </select>
           </label>
           <label className="grid gap-1.5 text-sm font-medium text-slate-700">
@@ -184,7 +265,20 @@ function InstitutionBillingPage({ section = 'subscriptions' }) {
             {renewal.isPending ? 'Starting checkout…' : subscription ? 'Renew / Upgrade' : 'Continue to payment'}
           </button>
         </div>
-        {renewal.isError && <p className="mt-3 text-sm text-red-800" role="alert">{renewal.error.apiMessage}</p>}
+        {renewal.isError && (
+          <div className="mt-3 text-sm text-red-800" role="alert">
+            <p>{renewal.error.apiMessage}</p>
+            {renewal.error.apiCode === 'PLAN_DOWNGRADE_BLOCKED' && (
+              <ul className="mt-2 list-inside list-disc">
+                {(renewal.error.response?.data?.error?.details?.departments || []).map((department) => (
+                  <li key={department.departmentId}>
+                    {department.name} ({department.enabledAuthorities}/{department.limit})
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </section>
 
       {section === 'subscriptions' ? (

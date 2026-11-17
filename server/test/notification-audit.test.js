@@ -8,6 +8,7 @@ const {
   getAuditLog,
   listAuditLogs,
   redactSensitiveMetadata,
+  writeAuditLog,
 } = require('../src/services/audit-log.service')
 const {
   listNotifications,
@@ -261,6 +262,78 @@ test('Authority audit listing and detail are department-scoped', async () => {
     (error) => error.statusCode === 404,
   )
   assert.deepEqual(detailWhere.departmentId, { in: ['department-1'] })
+})
+
+test('deleted-department audit rows remain hidden from Authorities but visible to institution admins', async () => {
+  let authorityWhere
+  await listAuditLogs(
+    'institution-1',
+    {},
+    {
+      auditLog: {
+        findMany: async ({ where }) => { authorityWhere = where; return [] },
+        count: async () => 0,
+      },
+    },
+    { departmentIds: ['department-1'] },
+  )
+  assert.deepEqual(authorityWhere.departmentId, { in: ['department-1'] })
+
+  let administratorWhere
+  await listAuditLogs('institution-1', {}, {
+    auditLog: {
+      findMany: async ({ where }) => { administratorWhere = where; return [] },
+      count: async () => 0,
+    },
+  })
+  assert.equal('departmentId' in administratorWhere, false)
+})
+
+test('department audit writer validates tenant ownership and stores the department name', async () => {
+  let created
+  const transaction = {
+    department: {
+      findFirst: async ({ where }) =>
+        where.id === 'department-1' && where.institutionId === 'institution-1'
+          ? { id: 'department-1', name: 'Science' }
+          : null,
+    },
+    auditLog: { create: async ({ data }) => { created = data; return data } },
+  }
+
+  await writeAuditLog(transaction, {
+    data: {
+      institutionId: 'institution-1',
+      departmentId: 'department-1',
+      action: 'TEST',
+      entityType: 'Department',
+      entityId: 'department-1',
+      metadata: { retained: true },
+    },
+  })
+
+  assert.equal(created.metadata.retained, true)
+  assert.equal(created.metadata.departmentName, 'Science')
+})
+
+test('department audit writer refuses a cross-tenant department', async () => {
+  let created = false
+  await assert.rejects(
+    writeAuditLog({
+      department: { findFirst: async () => null },
+      auditLog: { create: async () => { created = true } },
+    }, {
+      data: {
+        institutionId: 'institution-1',
+        departmentId: 'department-from-other-tenant',
+        action: 'TEST',
+        entityType: 'Department',
+        entityId: 'department-from-other-tenant',
+      },
+    }),
+    (error) => error.code === 'AUDIT_LOG_DEPARTMENT_INVALID',
+  )
+  assert.equal(created, false)
 })
 
 test('Authority audit filters reject unassigned departments', async () => {

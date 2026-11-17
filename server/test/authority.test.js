@@ -2,6 +2,7 @@ const assert = require('node:assert/strict')
 const { test } = require('node:test')
 const { createApp } = require('../src/app')
 const { createRequireInstitutionAdministrator } = require('../src/middlewares/auth')
+const { authorityCreationSchema } = require('../src/validators/authority.validators')
 const {
   createAuthority,
   deleteAuthority,
@@ -42,11 +43,35 @@ function activeSubscriptionModel(planCode = 'PRO') {
   }
 }
 
+test('Authority creation accepts one departmentId and rejects department arrays', () => {
+  const base = {
+    name: 'Authority Name',
+    email: 'authority@example.edu',
+    password: 'initial-secret',
+  }
+  assert.equal(
+    authorityCreationSchema.safeParse({ ...base, departmentId: 'department-1' }).success,
+    true,
+  )
+  assert.equal(
+    authorityCreationSchema.safeParse({ ...base, departmentIds: ['department-1'] }).success,
+    false,
+  )
+  assert.equal(
+    authorityCreationSchema.safeParse({ ...base, departmentId: ['department-1'] }).success,
+    false,
+  )
+})
+
 test('Authority creation provisions Firebase and PostgreSQL without storing the password', async () => {
   const writes = []
   const membership = makeMembership()
+  const departmentLocks = []
   const transaction = {
-    $queryRaw: async () => [],
+    $queryRaw: async (strings, ...values) => {
+      departmentLocks.push({ query: strings.join('?'), values })
+      return [{ id: 'department-1' }]
+    },
     subscription: activeSubscriptionModel(),
     user: {
       create: async ({ data }) => {
@@ -63,9 +88,13 @@ test('Authority creation provisions Firebase and PostgreSQL without storing the 
       findUnique: async () => membership,
     },
     authorityDepartment: {
-      createMany: async ({ data }) => writes.push({ table: 'assignments', data }),
+      count: async () => 0,
+      create: async ({ data }) => writes.push({ table: 'assignment', data }),
     },
-    department: { count: async () => 1 },
+    department: {
+      count: async () => 1,
+      findFirst: async () => ({ id: 'department-1', name: 'Engineering' }),
+    },
     auditLog: {
       create: async ({ data }) => writes.push({ table: 'audit', data }),
     },
@@ -78,7 +107,11 @@ test('Authority creation provisions Firebase and PostgreSQL without storing the 
     subscription: activeSubscriptionModel(),
     user: { findUnique: async () => null },
     institutionMembership: { count: async () => 0 },
-    department: { count: async () => 1 },
+    authorityDepartment: { count: async () => 0 },
+    department: {
+      count: async () => 1,
+      findFirst: async () => ({ id: 'department-1', name: 'Engineering' }),
+    },
     $transaction: async (callback) => callback(transaction),
   }
   let firebaseInput
@@ -90,7 +123,7 @@ test('Authority creation provisions Firebase and PostgreSQL without storing the 
   }
 
   const result = await createAuthority(
-    { name: 'Authority Name', email: 'AUTHORITY@example.edu', password: 'initial-secret', departmentIds: ['department-1'] },
+    { name: 'Authority Name', email: 'AUTHORITY@example.edu', password: 'initial-secret', departmentId: 'department-1' },
     'institution-1',
     'admin-1',
     { database, firebaseAuth },
@@ -102,20 +135,22 @@ test('Authority creation provisions Firebase and PostgreSQL without storing the 
   assert.equal(writes.find(({ table }) => table === 'user').data.email, 'authority@example.edu')
   assert.equal(writes.find(({ table }) => table === 'membership').data.role, 'AUTHORITY')
   assert.equal(writes.find(({ table }) => table === 'membership').data.status, 'ACTIVE')
-  assert.deepEqual(writes.find(({ table }) => table === 'assignments').data, [{
+  assert.deepEqual(writes.find(({ table }) => table === 'assignment').data, {
     institutionId: 'institution-1',
     authorityMembershipId: 'membership-1',
     departmentId: 'department-1',
     assignedById: 'admin-1',
-  }])
+  })
   assert.equal(writes.find(({ table }) => table === 'audit').data.action, 'AUTHORITY_CREATED')
   assert.equal(writes.find(({ table }) => table === 'notification').data.recipientId, 'admin-1')
+  assert.match(departmentLocks[0].query, /FOR UPDATE/)
+  assert.deepEqual(departmentLocks[0].values, ['department-1', 'institution-1'])
   assert.equal(JSON.stringify(writes).includes('initial-secret'), false)
   assert.equal(JSON.stringify(result).includes('initial-secret'), false)
   assert.equal('firebaseUid' in result, false)
 })
 
-test('Authority creation uses a Prisma-safe advisory lock and cleans Firebase after a transaction failure', async () => {
+test('Authority creation locks the department and cleans Firebase after a transaction failure', async () => {
   const deletedFirebaseUsers = []
   let lockSql = ''
   let lockParameters = []
@@ -124,10 +159,10 @@ test('Authority creation uses a Prisma-safe advisory lock and cleans Firebase af
     $queryRaw: async (strings, ...values) => {
       lockSql = strings.join('?')
       lockParameters = values
-      return [{ '?column?': true }]
+      return [{ id: 'department-1' }]
     },
     subscription: activeSubscriptionModel(),
-    institutionMembership: {
+    authorityDepartment: {
       count: async () => {
         throw transactionError
       },
@@ -136,14 +171,18 @@ test('Authority creation uses a Prisma-safe advisory lock and cleans Firebase af
   const database = {
     subscription: activeSubscriptionModel(),
     institutionMembership: { count: async () => 0 },
-    department: { count: async () => 1 },
+    authorityDepartment: { count: async () => 0 },
+    department: {
+      count: async () => 1,
+      findFirst: async () => ({ id: 'department-1', name: 'Engineering' }),
+    },
     user: { findUnique: async () => null },
     $transaction: async (callback) => callback(transaction),
   }
 
   await assert.rejects(
     createAuthority(
-      { name: 'Authority Name', email: 'authority@example.edu', password: 'initial-secret', departmentIds: ['department-1'] },
+      { name: 'Authority Name', email: 'authority@example.edu', password: 'initial-secret', departmentId: 'department-1' },
       'institution-1',
       'admin-1',
       {
@@ -157,9 +196,8 @@ test('Authority creation uses a Prisma-safe advisory lock and cleans Firebase af
     (error) => error === transactionError,
   )
 
-  assert.match(lockSql, /WITH advisory_lock AS MATERIALIZED/)
-  assert.match(lockSql, /SELECT TRUE\s+FROM advisory_lock/)
-  assert.deepEqual(lockParameters, ['authority-limit:institution-1'])
+  assert.match(lockSql, /FOR UPDATE/)
+  assert.deepEqual(lockParameters, ['department-1', 'institution-1'])
   assert.deepEqual(deletedFirebaseUsers, ['temporary-firebase-user'])
 })
 
@@ -168,14 +206,18 @@ test('duplicate application email is rejected before creating a Firebase account
 
   await assert.rejects(
     createAuthority(
-      { name: 'Authority Name', email: 'authority@example.edu', password: 'initial-secret', departmentIds: ['department-1'] },
+      { name: 'Authority Name', email: 'authority@example.edu', password: 'initial-secret', departmentId: 'department-1' },
       'institution-1',
       'admin-1',
       {
         database: {
           subscription: activeSubscriptionModel(),
           institutionMembership: { count: async () => 0 },
-          department: { count: async () => 1 },
+          authorityDepartment: { count: async () => 0 },
+          department: {
+            count: async () => 1,
+            findFirst: async () => ({ id: 'department-1', name: 'Engineering' }),
+          },
           user: { findUnique: async () => ({ id: 'existing-user' }) },
         },
         firebaseAuth: { createUser: async () => { createCalls += 1 } },
@@ -189,14 +231,18 @@ test('duplicate application email is rejected before creating a Firebase account
 test('duplicate Firebase email is reported as a conflict', async () => {
   await assert.rejects(
     createAuthority(
-      { name: 'Authority Name', email: 'authority@example.edu', password: 'initial-secret', departmentIds: ['department-1'] },
+      { name: 'Authority Name', email: 'authority@example.edu', password: 'initial-secret', departmentId: 'department-1' },
       'institution-1',
       'admin-1',
       {
         database: {
           subscription: activeSubscriptionModel(),
           institutionMembership: { count: async () => 0 },
-          department: { count: async () => 1 },
+          authorityDepartment: { count: async () => 0 },
+          department: {
+            count: async () => 1,
+            findFirst: async () => ({ id: 'department-1', name: 'Engineering' }),
+          },
           user: { findUnique: async () => null },
         },
         firebaseAuth: {
@@ -212,18 +258,22 @@ test('duplicate Firebase email is reported as a conflict', async () => {
   )
 })
 
-test('Authority creation enforces the subscribed plan limit before provisioning Firebase', async () => {
+test('Authority creation rejects a full Basic department before provisioning Firebase', async () => {
   let firebaseCalls = 0
   await assert.rejects(
     createAuthority(
-      { name: 'Authority Name', email: 'authority@example.edu', password: 'initial-secret', departmentIds: ['department-1'] },
+      { name: 'Authority Name', email: 'authority@example.edu', password: 'initial-secret', departmentId: 'department-1' },
       'institution-1',
       'admin-1',
       {
         database: {
           subscription: activeSubscriptionModel('BASIC'),
-          institutionMembership: { count: async () => 2 },
+          authorityDepartment: { count: async () => 1 },
           user: { findUnique: async () => null },
+          department: {
+            count: async () => 1,
+            findFirst: async () => ({ id: 'department-1', name: 'Engineering' }),
+          },
         },
         firebaseAuth: { createUser: async () => { firebaseCalls += 1 } },
       },
@@ -231,7 +281,10 @@ test('Authority creation enforces the subscribed plan limit before provisioning 
     (error) =>
       error.statusCode === 409 &&
       error.code === 'PLAN_LIMIT_REACHED' &&
-      error.details.limit === 2,
+      error.details.limit === 1 &&
+      error.details.current === 1 &&
+      error.details.departmentId === 'department-1' &&
+      error.details.planCode === 'BASIC',
   )
   assert.equal(firebaseCalls, 0)
 })
@@ -296,7 +349,11 @@ test('database creation failure deletes the provisional Firebase user', async ()
   const database = {
     subscription: activeSubscriptionModel(),
     institutionMembership: { count: async () => 0 },
-    department: { count: async () => 1 },
+    authorityDepartment: { count: async () => 0 },
+    department: {
+      count: async () => 1,
+      findFirst: async () => ({ id: 'department-1', name: 'Engineering' }),
+    },
     user: { findUnique: async () => null },
     $transaction: async () => {
       throw new Error('database unavailable')
@@ -309,7 +366,7 @@ test('database creation failure deletes the provisional Firebase user', async ()
 
   await assert.rejects(
     createAuthority(
-      { name: 'Authority Name', email: 'authority@example.edu', password: 'initial-secret', departmentIds: ['department-1'] },
+      { name: 'Authority Name', email: 'authority@example.edu', password: 'initial-secret', departmentId: 'department-1' },
       'institution-1',
       'admin-1',
       { database, firebaseAuth },
@@ -324,7 +381,11 @@ test('failed Firebase compensation is logged without exposing the password', asy
   const database = {
     subscription: activeSubscriptionModel(),
     institutionMembership: { count: async () => 0 },
-    department: { count: async () => 1 },
+    authorityDepartment: { count: async () => 0 },
+    department: {
+      count: async () => 1,
+      findFirst: async () => ({ id: 'department-1', name: 'Engineering' }),
+    },
     user: { findUnique: async () => null },
     $transaction: async () => {
       throw new Error('database unavailable')
@@ -339,7 +400,7 @@ test('failed Firebase compensation is logged without exposing the password', asy
 
   await assert.rejects(
     createAuthority(
-      { name: 'Authority Name', email: 'authority@example.edu', password: 'initial-secret', departmentIds: ['department-1'] },
+      { name: 'Authority Name', email: 'authority@example.edu', password: 'initial-secret', departmentId: 'department-1' },
       'institution-1',
       'admin-1',
       {
@@ -398,6 +459,41 @@ test('deactivation is institution-scoped and disables Firebase only when no acce
   assert.equal(result.firebaseAccessSynced, true)
   assert.deepEqual(updates, [{ status: 'INACTIVE' }])
   assert.deepEqual(firebaseUpdates, [['firebase-1', { disabled: true }]])
+})
+
+test('re-enabling an Authority is blocked when its department is already full', async () => {
+  let membershipUpdated = false
+  const database = {
+    institutionMembership: {
+      findFirst: async () => makeMembership({ status: 'INACTIVE' }),
+    },
+    user: {
+      findUnique: async () => { throw new Error('Firebase access must not sync after a blocked enable') },
+    },
+    $transaction: async (callback) => callback({
+      $queryRaw: async () => [{ id: 'department-1' }],
+      subscription: activeSubscriptionModel('BASIC'),
+      authorityDepartment: { count: async () => 1 },
+      institutionMembership: {
+        update: async () => { membershipUpdated = true },
+      },
+    }),
+  }
+
+  await assert.rejects(
+    setAuthorityEnabled(
+      'institution-1',
+      'membership-1',
+      true,
+      'admin-1',
+      { database },
+    ),
+    (error) =>
+      error.code === 'PLAN_LIMIT_REACHED' &&
+      error.details.departmentId === 'department-1' &&
+      error.details.planCode === 'BASIC',
+  )
+  assert.equal(membershipUpdated, false)
 })
 
 test('deactivation preserves Firebase sign-in when another active institution membership remains', async () => {
@@ -487,6 +583,7 @@ test('Firebase status-sync failures remain visible while local membership access
 test('soft deletion retains membership and audit history and disables only an unshared identity', async () => {
   const now = new Date('2026-11-04T00:00:00Z')
   const membershipUpdates = []
+  const removedAssignments = []
   const auditEntries = []
   const firebaseUpdates = []
   const database = {
@@ -505,6 +602,9 @@ test('soft deletion retains membership and audit history and disables only an un
       institutionMembership: {
         update: async (args) => membershipUpdates.push(args),
       },
+      authorityDepartment: {
+        deleteMany: async (args) => removedAssignments.push(args),
+      },
       auditLog: { create: async ({ data }) => auditEntries.push(data) },
       institution: { findUnique: async () => ({ adminUserId: 'admin-1' }) },
       notification: { create: async () => undefined },
@@ -518,6 +618,9 @@ test('soft deletion retains membership and audit history and disables only an un
   })
 
   assert.deepEqual(membershipUpdates[0].data, { status: 'INACTIVE', deletedAt: now })
+  assert.deepEqual(removedAssignments, [{
+    where: { institutionId: 'institution-1', authorityMembershipId: 'membership-1' },
+  }])
   assert.equal(auditEntries[0].action, 'AUTHORITY_DELETED')
   assert.equal(auditEntries[0].metadata.softDeleted, true)
   assert.equal(result.authority.deletedAt, now)
@@ -580,7 +683,7 @@ test('administrator cannot manage Authority accounts belonging to another instit
   assert.equal(publicRegistration.status, 501)
 })
 
-test('PUT /api/authorities/:id/departments resolves and authorizes the owning institution', async (context) => {
+test('PUT /api/authorities/:id/department resolves and authorizes the owning institution', async (context) => {
   let authorizedInstitutionId
   let updated
   const app = createApp({
@@ -607,8 +710,8 @@ test('PUT /api/authorities/:id/departments resolves and authorizes the owning in
           },
         },
         controller: {
-          replaceDepartments: (req, res) => {
-            updated = req.validated.body.departmentIds
+          changeDepartment: (req, res) => {
+            updated = req.validated.body.departmentId
             return res.json({ ok: true })
           },
         },
@@ -620,15 +723,26 @@ test('PUT /api/authorities/:id/departments resolves and authorizes the owning in
   context.after(() => new Promise((resolve) => server.close(resolve)))
 
   const response = await fetch(
-    `http://127.0.0.1:${server.address().port}/api/authorities/membership-1/departments`,
+    `http://127.0.0.1:${server.address().port}/api/authorities/membership-1/department`,
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ departmentIds: ['department-1'] }),
+      body: JSON.stringify({ departmentId: 'department-1' }),
     },
   )
 
   assert.equal(response.status, 200)
   assert.equal(authorizedInstitutionId, 'institution-1')
-  assert.deepEqual(updated, ['department-1'])
+  assert.equal(updated, 'department-1')
+
+  const arrayResponse = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/authorities/membership-1/department`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ departmentId: ['department-1', 'department-2'] }),
+    },
+  )
+  assert.equal(arrayResponse.status, 400)
+  assert.equal(updated, 'department-1')
 })

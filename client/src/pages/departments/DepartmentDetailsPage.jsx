@@ -18,8 +18,12 @@ function DepartmentDetailsPage({ institutionId, departmentId }) {
     retry: false,
   })
   const assignments = useMutation({
-    mutationFn: async ({ membershipId, departmentIds }) =>
-      (await api.put(`/authorities/${encodeURIComponent(membershipId)}/departments`, { departmentIds })).data.data.departments,
+    mutationFn: async ({ membershipId, departmentId: targetDepartmentId }) =>
+      (await api.put(`/authorities/${encodeURIComponent(membershipId)}/department`, {
+        departmentId: targetDepartmentId,
+      }, {
+        headers: { 'X-Institution-Id': institutionId },
+      })).data.data.department,
     onSuccess: async () => {
       toast.success('Authority department assignments updated')
       await Promise.all([
@@ -32,6 +36,12 @@ function DepartmentDetailsPage({ institutionId, departmentId }) {
   })
 
   const department = details.data
+  const authorityUsage = department.authorityUsage || { used: 0, limit: null }
+  const authorityLimitReached =
+    Number.isInteger(authorityUsage.limit) && authorityUsage.used >= authorityUsage.limit
+  const authorityLimitMessage = authorityUsage.planCode === 'BASIC'
+    ? 'Upgrade to Pro for up to 3 authorities per department'
+    : 'This department has reached its Authority limit.'
   const assignedIds = useMemo(
     () => new Set(department?.authorityAssignments?.map(({ id }) => id) || []),
     [department?.authorityAssignments],
@@ -45,16 +55,9 @@ function DepartmentDetailsPage({ institutionId, departmentId }) {
     if (!authority) return
     assignments.mutate({
       membershipId: authority.id,
-      departmentIds: [...authority.departments.map(({ id }) => id), departmentId],
+      departmentId,
     })
     setAuthorityId('')
-  }
-
-  function removeAuthority(authority) {
-    const departmentIds = authority.departments
-      .filter(({ id }) => id !== departmentId)
-      .map(({ id }) => id)
-    assignments.mutate({ membershipId: authority.id, departmentIds })
   }
 
   if (details.isLoading) return <main className="mx-auto max-w-5xl px-5 py-12"><p role="status">Loading department details…</p></main>
@@ -96,22 +99,38 @@ function DepartmentDetailsPage({ institutionId, departmentId }) {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h2 className="text-xl font-semibold text-slate-950">Assigned Authorities</h2>
-            <p className="mt-1 text-sm text-slate-600">Authorities can be assigned to more than one department.</p>
+            <p className="mt-1 text-sm text-slate-600">
+              {authorityUsage.used}/{authorityUsage.limit ?? '∞'} authorities
+            </p>
           </div>
         </div>
         {authorities.isError && <p className="mt-4 text-sm text-red-700" role="alert">{authorities.error.apiMessage || 'Could not load Authority accounts.'}</p>}
         {!authorities.isError && (
           <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-end">
             <label className="grid flex-1 gap-2 text-sm font-medium text-slate-700">
-              Add an Authority
+              Add Authority
               <select className="min-h-11 rounded-lg border border-slate-300 bg-white px-3" onChange={(event) => setAuthorityId(event.target.value)} value={authorityId}>
                 <option value="">Select an Authority</option>
-                {availableAuthorities.map((authority) => <option key={authority.id} value={authority.id}>{authority.user.name} · {authority.user.email}</option>)}
+                {availableAuthorities.map((authority) => (
+                  <option key={authority.id} value={authority.id}>
+                    {authority.user.name} · {authority.user.email}
+                  </option>
+                ))}
               </select>
             </label>
-            <button className="min-h-11 rounded-lg bg-blue-700 px-5 font-semibold text-white hover:bg-blue-800 disabled:opacity-60" disabled={!authorityId || assignments.isPending} onClick={addAuthority} type="button">
-              {assignments.isPending ? 'Saving…' : 'Add to department'}
-            </button>
+            <span title={authorityLimitReached ? authorityLimitMessage : undefined}>
+              <button
+                className="min-h-11 rounded-lg bg-blue-700 px-5 font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={!authorityId || assignments.isPending || authorityLimitReached}
+                onClick={addAuthority}
+                type="button"
+              >
+                {assignments.isPending ? 'Saving…' : 'Add Authority'}
+              </button>
+            </span>
+            {authorityLimitReached && (
+              <p className="text-sm text-amber-800" role="status">{authorityLimitMessage}</p>
+            )}
           </div>
         )}
         {department.authorityAssignments.length === 0 ? (
@@ -124,14 +143,16 @@ function DepartmentDetailsPage({ institutionId, departmentId }) {
                   <p className="font-semibold text-slate-900">{authority.user.name}</p>
                   <p className="mt-1 text-sm text-slate-600">{authority.user.email}</p>
                 </div>
-                <button className="text-sm font-semibold text-red-700 underline disabled:opacity-50" disabled={assignments.isPending} onClick={() => removeAuthority(authority)} type="button">
-                  Remove
-                </button>
+                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                  {authority.status}
+                </span>
               </li>
             ))}
           </ul>
         )}
-        <p className="mt-4 text-xs text-slate-500">Each Authority must remain assigned to at least one department. The server will explain if a removal is blocked.</p>
+        <p className="mt-4 text-xs text-slate-500">
+          Changing an Authority’s department moves its access; Authorities cannot be left unassigned.
+        </p>
       </section>
     </main>
   )

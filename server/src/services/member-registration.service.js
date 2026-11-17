@@ -1,6 +1,7 @@
 const { getFirebaseAuth } = require('../config/firebase-admin')
 const ApiError = require('../utils/api-error')
 const { assertPlanLimit, ensureActiveSubscription } = require('./subscription.service')
+const { writeAuditLog } = require('./audit-log.service')
 const {
   ensureAuthorityDepartmentInScope,
   getDepartmentScopeWhere,
@@ -200,7 +201,7 @@ async function registerMember(
         select: { id: true },
       })
 
-      await transaction.auditLog.create({
+      await writeAuditLog(transaction, {
         data: {
           institutionId: institution.id,
           departmentId: currentDepartment.id,
@@ -491,7 +492,7 @@ async function decideRegistration(
       },
     })
 
-    await transaction.auditLog.create({
+    await writeAuditLog(transaction, {
       data: {
         institutionId,
         departmentId: membership.requestedDepartmentId,

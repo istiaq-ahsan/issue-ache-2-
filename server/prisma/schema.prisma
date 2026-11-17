@@ -218,7 +218,6 @@ model Department {
   authorityAssignments         AuthorityDepartment[]
   subscriptions                Subscription[]
   payments                     Payment[]
-  auditLogs                    AuditLog[]
   issues                       Issue[]
   notifications                Notification[]
   currentForChangeRequests     DepartmentChangeRequest[] @relation("CurrentDepartment")
@@ -233,7 +232,7 @@ model Department {
 model AuthorityDepartment {
   id                    String   @id @default(cuid())
   institutionId         String
-  authorityMembershipId String
+  authorityMembershipId String   @unique
   departmentId          String
   assignedById          String
   createdAt             DateTime @default(now())
@@ -243,7 +242,6 @@ model AuthorityDepartment {
   department          Department            @relation(fields: [departmentId, institutionId], references: [id, institutionId], onDelete: Restrict)
   assignedBy          User                  @relation("AuthorityDepartmentAssigner", fields: [assignedById], references: [id], onDelete: Restrict)
 
-  @@unique([authorityMembershipId, departmentId])
   @@index([institutionId])
   @@index([departmentId])
 }
@@ -483,12 +481,12 @@ model AuditLog {
   createdAt         DateTime @default(now())
 
   institution     Institution?           @relation(fields: [institutionId], references: [id], onDelete: Restrict)
-  department      Department?            @relation(fields: [departmentId, institutionId], references: [id, institutionId], onDelete: Restrict)
   actor           User?                  @relation("AuditActor", fields: [actorId], references: [id], onDelete: Restrict)
   actorMembership InstitutionMembership? @relation("AuditActorMembership", fields: [actorMembershipId, institutionId, actorId], references: [id, institutionId, userId], onDelete: Restrict)
 
   @@index([institutionId, createdAt])
   @@index([departmentId, createdAt])
+  @@index([institutionId, departmentId])
   @@index([institutionId, entityType, entityId])
   @@index([actorId, createdAt])
   @@index([actorMembershipId, createdAt])

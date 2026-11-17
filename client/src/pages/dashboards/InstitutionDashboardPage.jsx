@@ -21,19 +21,21 @@ function InstitutionDashboardPage() {
     queryKey: ['institution-dashboard-overview', institutionId],
     queryFn: async () => {
       const encodedId = encodeURIComponent(institutionId)
-      const [overview, departments, authorities, billing] = await Promise.all([
+      const [overview, departments, authorities, billing, plans] = await Promise.all([
         api.get(`/institutions/${encodedId}/dashboard`),
         api.get(`/institutions/${encodedId}/departments`),
         api.get(`/institutions/${encodedId}/authorities`),
         api.get('/subscriptions/current', {
           headers: { 'X-Institution-Id': institutionId },
         }),
+        api.get('/plans'),
       ])
       return {
         overview: overview.data.data,
         departments: departments.data.data.departments,
         authorities: authorities.data.data.authorities,
         billing: billing.data.data,
+        plans: plans.data.data.plans,
       }
     },
     retry: false,
@@ -54,7 +56,7 @@ function InstitutionDashboardPage() {
     )
   }
 
-  const { overview, departments, authorities, billing } = dashboard.data
+  const { overview, departments, authorities, billing, plans } = dashboard.data
   const institutionPath = `/institution/dashboard/${encodeURIComponent(institutionId)}`
   const membersByRole = (role) => overview.memberships
     .filter((entry) => entry.role === role)
@@ -63,10 +65,17 @@ function InstitutionDashboardPage() {
     .filter((issue) => issue.audience === audience)
     .reduce((total, issue) => total + issue.count, 0)
   const assignedDepartmentIds = new Set(
-    authorities.flatMap((authority) => authority.departments.map(({ id }) => id)),
+    authorities
+      .filter((authority) => !authority.deletedAt)
+      .flatMap((authority) => authority.departments.map(({ id }) => id)),
   )
   const departmentsWithoutAuthority = departments.filter(({ id }) => !assignedDepartmentIds.has(id))
   const subscription = billing.current
+  const authorityLimit = plans.find(({ code }) => code === subscription?.planCode)
+    ?.limits?.maxAuthoritiesPerDepartment
+  const departmentsOverLimit = Number.isInteger(authorityLimit)
+    ? departments.filter(({ authorityUsage }) => authorityUsage?.used > authorityLimit)
+    : []
 
   return (
     <main className="mx-auto min-h-screen max-w-6xl px-5 py-10 sm:px-8">
@@ -100,6 +109,20 @@ function InstitutionDashboardPage() {
                 <Link className="inline-flex rounded-full border border-amber-300 bg-white px-3 py-1.5 text-sm font-semibold text-amber-950 hover:bg-amber-100" to={`${institutionPath}/departments/${encodeURIComponent(department.id)}`}>
                   {department.name} · Assign
                 </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {departmentsOverLimit.length > 0 && (
+        <section aria-labelledby="departments-over-authority-limit" className="mt-6 rounded-2xl border border-red-300 bg-red-50 p-5">
+          <h2 className="font-semibold text-red-950" id="departments-over-authority-limit">Departments over their authority limit</h2>
+          <p className="mt-1 text-sm text-red-900">Existing Authorities keep access, but new or re-enabled Authorities are blocked until each department is within its plan limit.</p>
+          <ul className="mt-3 flex flex-wrap gap-2">
+            {departmentsOverLimit.map((department) => (
+              <li className="rounded-full border border-red-300 bg-white px-3 py-1.5 text-sm font-semibold text-red-950" key={department.id}>
+                {department.name} · {department.authorityUsage.used} / {authorityLimit}
               </li>
             ))}
           </ul>

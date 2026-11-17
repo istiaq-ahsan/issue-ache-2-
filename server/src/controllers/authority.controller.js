@@ -2,20 +2,20 @@ const asyncHandler = require('../utils/async-handler')
 const { sendSuccess } = require('../utils/api-response')
 const {
   createAuthority,
+  changeAuthorityDepartment,
   deleteAuthority,
   listAuthorities,
-  replaceAuthorityDepartments,
   setAuthorityEnabled,
   updateAuthority,
 } = require('../services/authority.service')
 
 function createAuthorityController({
   create = createAuthority,
+  changeDepartment = changeAuthorityDepartment,
   list = listAuthorities,
   update = updateAuthority,
   setEnabled = setAuthorityEnabled,
   remove = deleteAuthority,
-  replaceDepartments = replaceAuthorityDepartments,
 } = {}) {
   return {
     create: asyncHandler(async (req, res) => {
@@ -63,15 +63,15 @@ function createAuthorityController({
         message: result.warning || 'Authority account deleted',
       })
     }),
-    replaceDepartments: asyncHandler(async (req, res) => {
-      const departments = await replaceDepartments(
+    changeDepartment: asyncHandler(async (req, res) => {
+      const department = await changeDepartment(
         req.auth.institutionId,
         req.params.membershipId,
-        req.validated.body.departmentIds,
+        req.validated.body.departmentId,
         req.auth.user.id,
       )
-      return sendSuccess(res, { departments }, {
-        message: 'Authority department assignments updated',
+      return sendSuccess(res, { department }, {
+        message: 'Authority department changed',
       })
     }),
   }

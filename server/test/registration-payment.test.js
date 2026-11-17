@@ -269,6 +269,11 @@ test('plans endpoint exposes the server plan catalog and old bypass route is gon
   assert.equal(plansResponse.status, 200)
   assert.deepEqual(plansBody.data.plans.map(({ code }) => code), ['BASIC', 'PRO'])
   assert.equal(plansBody.data.plans[0].prices.YEARLY, 14990)
+  assert.equal(plansBody.data.plans[0].limits.maxAuthoritiesPerDepartment, 1)
+  assert.equal(plansBody.data.plans[1].limits.maxAuthoritiesPerDepartment, 3)
+  assert.equal(plansBody.data.plans[0].limits.maxDepartments, null)
+  assert.equal(plansBody.data.plans[1].limits.maxDepartments, null)
+  assert.equal('maxAuthorities' in plansBody.data.plans[0].limits, false)
 
   const legacyResponse = await fetch(`${baseUrl}/api/institutions/register`, {
     method: 'POST',

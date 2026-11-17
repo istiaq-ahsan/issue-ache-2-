@@ -1,5 +1,6 @@
 const ApiError = require('../utils/api-error')
 const { ensureAuthorityDepartmentInScope } = require('../middlewares/authority-scope')
+const { writeAuditLog } = require('./audit-log.service')
 
 function getDatabase() {
   return require('../config/prisma')
@@ -253,7 +254,7 @@ async function createDepartmentChangeRequest(
         })
       }
 
-      await transaction.auditLog.create({
+      await writeAuditLog(transaction, {
         data: {
           institutionId,
           departmentId: requestedDepartmentId || currentDepartmentId,
@@ -414,7 +415,7 @@ async function cancelMemberDepartmentChange(
       throw conflict('This request has already been reviewed', 'DEPARTMENT_CHANGE_ALREADY_REVIEWED')
     }
 
-    await transaction.auditLog.create({
+    await writeAuditLog(transaction, {
       data: {
         institutionId,
         departmentId: request.requestedDepartmentId || request.currentDepartmentId,
@@ -647,7 +648,7 @@ async function decideDepartmentChange(
       },
     })
 
-    await transaction.auditLog.create({
+    await writeAuditLog(transaction, {
       data: {
         institutionId,
         departmentId: targetDepartmentId,

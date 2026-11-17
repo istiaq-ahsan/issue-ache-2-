@@ -1,7 +1,7 @@
 const { z } = require('zod')
 
-const authorityDepartmentsSchema = z.object({
-  departmentIds: z.array(z.string().trim().min(1).max(128)).min(1),
+const authorityDepartmentSchema = z.object({
+  departmentId: z.string().trim().min(1).max(128),
 }).strict()
 
-module.exports = { authorityDepartmentsSchema }
+module.exports = { authorityDepartmentSchema }

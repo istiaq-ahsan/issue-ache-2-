@@ -4,7 +4,7 @@ const authorityCreationSchema = z.object({
   name: z.string().trim().min(1).max(200),
   email: z.string().trim().email().max(320).transform((email) => email.toLowerCase()),
   password: z.string().min(8).max(128),
-  departmentIds: z.array(z.string().trim().min(1).max(128)).min(1),
+  departmentId: z.string().trim().min(1).max(128),
 }).strict()
 
 const authorityUpdateSchema = z

@@ -35,6 +35,12 @@ function baseIssue(overrides = {}) {
 function makeCreateDatabase({ departmentMembership = { departmentId: 'department-1' } } = {}) {
   const writes = []
   const tx = {
+    department: {
+      findFirst: async ({ where }) => ({
+        id: where.id,
+        name: 'Science',
+      }),
+    },
     departmentMembership: {
       findFirst: async (args) => {
         writes.push({ table: 'departmentMembership.findFirst', args })
@@ -69,6 +75,12 @@ function makeCreateDatabase({ departmentMembership = { departmentId: 'department
 function makeStatusDatabase({ issue = baseIssue(), changedCount = 1 } = {}) {
   const writes = []
   const tx = {
+    department: {
+      findFirst: async ({ where }) => ({
+        id: where.id,
+        name: 'Science',
+      }),
+    },
     issue: {
       findFirst: async ({ where }) => {
         writes.push({ table: 'issue.findFirst', where })

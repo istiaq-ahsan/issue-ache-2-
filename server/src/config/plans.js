@@ -5,7 +5,11 @@ const PLAN_CATALOG = Object.freeze({
     currency: 'BDT',
     trialDays: 14,
     prices: Object.freeze({ MONTHLY: 1499, YEARLY: 14990 }),
-    limits: Object.freeze({ maxAuthorities: 2, maxMembers: 1000 }),
+    limits: Object.freeze({
+      maxAuthoritiesPerDepartment: 1,
+      maxDepartments: null,
+      maxMembers: 1000,
+    }),
   }),
   PRO: Object.freeze({
     code: 'PRO',
@@ -13,7 +17,11 @@ const PLAN_CATALOG = Object.freeze({
     currency: 'BDT',
     trialDays: 0,
     prices: Object.freeze({ MONTHLY: 3999, YEARLY: 39990 }),
-    limits: Object.freeze({ maxAuthorities: 5, maxMembers: 10000 }),
+    limits: Object.freeze({
+      maxAuthoritiesPerDepartment: 3,
+      maxDepartments: null,
+      maxMembers: 10000,
+    }),
   }),
 })
 

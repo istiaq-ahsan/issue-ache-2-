@@ -9,26 +9,26 @@ function runMiddleware(middleware, req) {
   return new Promise((resolve) => middleware(req, {}, (error) => resolve(error)))
 }
 
-test('Authority department scope is loaded from AuthorityDepartment records', async () => {
+test('Authority scope reads one AuthorityDepartment row and returns a department-id array', async () => {
   let query
   const departmentIds = await getAuthorityDepartmentIds('authority-membership', {
     authorityDepartment: {
-      findMany: async (args) => {
+      findFirst: async (args) => {
         query = args
-        return [{ departmentId: 'department-1' }, { departmentId: 'department-2' }]
+        return { departmentId: 'department-1' }
       },
     },
   })
 
   assert.deepEqual(query.where, { authorityMembershipId: 'authority-membership' })
-  assert.deepEqual(departmentIds, ['department-1', 'department-2'])
+  assert.deepEqual(departmentIds, ['department-1'])
 })
 
 test('scope middleware rejects unassigned Authorities and out-of-scope department context', async () => {
   const middleware = attachAuthorityScope({
     database: {
       authorityDepartment: {
-        findMany: async () => [{ departmentId: 'department-1' }],
+        findFirst: async () => ({ departmentId: 'department-1' }),
       },
     },
   })
@@ -47,7 +47,7 @@ test('scope middleware rejects unassigned Authorities and out-of-scope departmen
 
   const unassigned = await runMiddleware(
     attachAuthorityScope({
-      database: { authorityDepartment: { findMany: async () => [] } },
+      database: { authorityDepartment: { findFirst: async () => null } },
     }),
     {
       auth: {

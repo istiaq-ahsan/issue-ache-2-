@@ -6,11 +6,11 @@ function getDatabase() {
 }
 
 async function getAuthorityDepartmentIds(authorityMembershipId, database = getDatabase()) {
-  const assignments = await database.authorityDepartment.findMany({
+  const assignment = await database.authorityDepartment.findFirst({
     where: { authorityMembershipId },
     select: { departmentId: true },
   })
-  return assignments.map(({ departmentId }) => departmentId)
+  return assignment ? [assignment.departmentId] : []
 }
 
 function attachAuthorityScope({ database = getDatabase } = {}) {

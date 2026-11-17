@@ -76,10 +76,16 @@ function PricingPage() {
           const highlighted = plan.code === 'PRO'
           const registrationPath = `/institution/register?plan=${plan.code}&cycle=${cycle}`
           const yearlyMonthlyPrice = plan.prices.YEARLY / 12
+          const authorityLimit = plan.limits.maxAuthoritiesPerDepartment
+          const departmentLimit = plan.limits.maxDepartments
           const features = [
-            `${plan.limits.maxAuthorities} Authorities`,
+            authorityLimit === 1
+              ? '1 authority per department'
+              : `Up to ${authorityLimit} authorities per department`,
             `${plan.limits.maxMembers.toLocaleString()} students and teachers`,
-            'Unlimited departments',
+            departmentLimit === null
+              ? 'Unlimited departments'
+              : `Up to ${departmentLimit.toLocaleString()} departments`,
             'Issue tracking and management',
             'Campus analytics and reporting',
           ]

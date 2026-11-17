@@ -35,6 +35,39 @@ function serializeAuditLog(entry) {
   }
 }
 
+async function writeAuditLog(transaction, { data }) {
+  let auditData = data
+  if (data.departmentId !== undefined && data.departmentId !== null) {
+    const department = await transaction.department.findFirst({
+      where: {
+        id: data.departmentId,
+        institutionId: data.institutionId,
+      },
+      select: { id: true, name: true },
+    })
+    if (!department) {
+      throw new ApiError(
+        500,
+        'AUDIT_LOG_DEPARTMENT_INVALID',
+        'The audit log department does not belong to its institution',
+      )
+    }
+
+    const metadata = data.metadata &&
+      typeof data.metadata === 'object' &&
+      !Array.isArray(data.metadata)
+      ? data.metadata
+      : data.metadata === null || data.metadata === undefined
+        ? {}
+        : { previousMetadata: data.metadata }
+    auditData = {
+      ...data,
+      metadata: { ...metadata, departmentName: department.name },
+    }
+  }
+  return transaction.auditLog.create({ data: auditData })
+}
+
 async function listAuditLogs(
   institutionId,
   filters = {},
@@ -117,4 +150,9 @@ async function getAuditLog(
   return serializeAuditLog(entry)
 }
 
-module.exports = { getAuditLog, listAuditLogs, redactSensitiveMetadata }
+module.exports = {
+  getAuditLog,
+  listAuditLogs,
+  redactSensitiveMetadata,
+  writeAuditLog,
+}

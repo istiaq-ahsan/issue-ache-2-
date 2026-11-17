@@ -3,6 +3,10 @@ const { getPlan } = require('../config/plans')
 const ApiError = require('../utils/api-error')
 const { notifyInstitutionAdministrator } = require('../utils/institution-notification')
 const paymentService = require('./payment/paymentService')
+const {
+  getDepartmentsOverAuthorityLimit,
+  planDowngradeBlockedError,
+} = require('./authority-limit.service')
 
 function getDatabase() {
   return require('../config/prisma')
@@ -135,7 +139,7 @@ function assertPlanLimit(subscription, resource, currentCount) {
     throw new ApiError(
       409,
       'PLAN_LIMIT_REACHED',
-      `The ${resource === 'maxAuthorities' ? 'Authority' : 'member'} limit for this plan has been reached`,
+      'The member limit for this plan has been reached',
       { limit, current: currentCount, resource },
     )
   }
@@ -220,6 +224,16 @@ async function startSubscriptionRenewal(institutionId, actorId, input, {
   const amount = plan?.prices?.[input.billingCycle]
   if (!plan || !amount) {
     throw new ApiError(400, 'INVALID_SUBSCRIPTION_PLAN', 'The selected plan or billing cycle is not available')
+  }
+  if (plan.code === 'BASIC') {
+    const overLimitDepartments = await getDepartmentsOverAuthorityLimit(
+      database,
+      institutionId,
+      plan.code,
+    )
+    if (overLimitDepartments.length > 0) {
+      throw planDowngradeBlockedError(overLimitDepartments)
+    }
   }
 
   const pendingPayment = await database.payment.findFirst({
@@ -397,6 +411,9 @@ async function processSubscriptionPaymentCallback(paymentId, callbackPayload, {
         return { subscription: null }
       }
 
+      const overLimitDepartments = plan.code === 'BASIC'
+        ? await getDepartmentsOverAuthorityLimit(transaction, record.institutionId, plan.code)
+        : []
       const currentSubscription = await transaction.subscription.findFirst({
         where: {
           institutionId: record.institutionId,
@@ -457,18 +474,27 @@ async function processSubscriptionPaymentCallback(paymentId, callbackPayload, {
           action: 'SUBSCRIPTION_CREATED',
           entityType: 'Subscription',
           entityId: subscription.id,
-          metadata: { planCode: plan.code, billingCycle: record.billingCycle, startsAt: startsAt.toISOString() },
+          metadata: {
+            planCode: plan.code,
+            billingCycle: record.billingCycle,
+            startsAt: startsAt.toISOString(),
+            ...(overLimitDepartments.length > 0 ? { overLimitDepartments } : {}),
+          },
         },
       })
       await notifyInstitutionAdministrator(transaction, {
         institutionId: record.institutionId,
         type: 'SUBSCRIPTION_PAYMENT_SUCCESSFUL',
-        title: 'Subscription payment successful',
-        message: `${plan.name} ${record.billingCycle.toLowerCase()} subscription is scheduled to start ${startsAt.toLocaleDateString()}.`,
+        title: overLimitDepartments.length > 0
+          ? 'Subscription payment successful; Authority limits need attention'
+          : 'Subscription payment successful',
+        message: overLimitDepartments.length > 0
+          ? `${plan.name} ${record.billingCycle.toLowerCase()} subscription is scheduled to start ${startsAt.toLocaleDateString()}. Reduce enabled Authorities to ${getPlan('BASIC').limits.maxAuthoritiesPerDepartment} in these departments before the term starts: ${overLimitDepartments.map(({ name, enabledAuthorities }) => `${name} (${enabledAuthorities})`).join(', ')}.`
+          : `${plan.name} ${record.billingCycle.toLowerCase()} subscription is scheduled to start ${startsAt.toLocaleDateString()}.`,
         relatedEntityType: 'Subscription',
         relatedEntityId: subscription.id,
       })
-      return { subscription }
+      return { subscription, overLimitDepartments }
     })
 
     return {
@@ -476,6 +502,9 @@ async function processSubscriptionPaymentCallback(paymentId, callbackPayload, {
       paymentStatus: verification.status,
       subscriptionId: result.subscription?.id || null,
       subscription: result.subscription,
+      ...(result.overLimitDepartments?.length > 0
+        ? { overLimitDepartments: result.overLimitDepartments }
+        : {}),
       alreadyProcessed: false,
     }
   } catch (error) {
